@@ -1,0 +1,24 @@
+version: "3.8"
+name: jarvis-tools
+
+services:
+  mcp_tools:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: jarvis-mcp-tools:local
+    container_name: jarvis_mcp_tools
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:7010:7010"
+    volumes:
+      # Mount host tools read-only
+      - /home/jarvis/tools:/opt/host-tools:ro
+    networks:
+      - jarvis_net
+
+networks:
+  jarvis_net:
+    external: true
