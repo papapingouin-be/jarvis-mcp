@@ -9,8 +9,11 @@ services:
     image: jarvis-mcp-tools:local
     container_name: jarvis_mcp_tools
     restart: unless-stopped
-    env_file:
-      - .env
+    environment:
+      TZ: Europe/Brussels
+      NPM_URL: "http://192.168.12.1:81"
+      NPM_IDENTITY: "jarvis.eureka@gmail.com"
+      NPM_SECRET: "Server76"
     ports:
       - "127.0.0.1:7010:7010"
     volumes:
