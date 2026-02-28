@@ -1,18 +1,24 @@
-FROM node:20-alpine
-
+# ===== build stage =====
+FROM node:20-alpine AS build
 WORKDIR /app
 
-# Install deps
 COPY package*.json ./
-RUN npm ci --omit=dev || npm install
+RUN npm ci
 
-# Copy sources
 COPY . .
+RUN npm run build
 
-# Build if project has build script
-RUN npm run build || true
+# ===== runtime stage =====
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+
+# only runtime deps
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# compiled output
+COPY --from=build /app/build ./build
 
 EXPOSE 7010
-
-# Default: run dev/start if present, else keep container alive (you will adjust once MCP server is wired)
-CMD sh -lc 'npm run start 2>/dev/null || npm run dev 2>/dev/null || tail -f /dev/null'
+CMD ["node", "build/index.js"]
