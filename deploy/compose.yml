@@ -9,6 +9,8 @@ services:
     container_name: jarvis_mcp_tools
     restart: unless-stopped
     environment:
+      STARTER_TRANSPORT: "http"
+      PORT: "7010"
       TZ: Europe/Brussels
       NPM_URL: "http://192.168.12.1:81"
       NPM_IDENTITY: "jarvis.eureka@gmail.com"
