@@ -41,28 +41,36 @@ export async function boot(
   app.use(express.json({ limit: "1mb" }));
 
 
+  // HTTP mode with SSE support
+  const app = express();
+  app.use(express.json({ limit: "1mb" }));
+
   const corsOrigin = process.env.CORS_ORIGIN ?? "*";
   app.use(cors({
     origin: corsOrigin,
     credentials: true,
     methods: ["GET", "POST", "OPTIONS", "DELETE"],
-    // accept both canonical and legacy headers
     allowedHeaders: ["Content-Type", "Mcp-Session-Id", "x-mcp-session-id", "x-mcp-session"],
     exposedHeaders: ["Mcp-Session-Id", "x-mcp-session-id"],
   }));
 
-  // Ensure every request has a session id (so clients can start without a handshake dance)
+  // Create transport with session support
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID()
+  });
+
+  await server.connect(transport);
+
+  // Ensure every request has a session id (clients can start without a handshake dance)
   app.use("/mcp", (req, res, next) => {
     const sid =
       (req.header("Mcp-Session-Id") ?? req.header("x-mcp-session-id") ?? "").trim() || randomUUID();
 
-    // Put it back on the request for the transport (Express req.header reads from headers)
     // Express/Node types don't like header mutation; we do it intentionally for the transport
     const h = (req as any).headers as Record<string, string>;
     h["mcp-session-id"] = sid;
     h["x-mcp-session-id"] = sid;
 
-    // Expose it to the client
     res.setHeader("Mcp-Session-Id", sid);
     res.setHeader("x-mcp-session-id", sid);
 
