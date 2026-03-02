@@ -57,8 +57,10 @@ export async function boot(
       (req.header("Mcp-Session-Id") ?? req.header("x-mcp-session-id") ?? "").trim() || randomUUID();
 
     // Put it back on the request for the transport (Express req.header reads from headers)
-    req.headers["mcp-session-id"] = sid;
-    req.headers["x-mcp-session-id"] = sid;
+    // Express/Node types don't like header mutation; we do it intentionally for the transport
+    const h = (req as any).headers as Record<string, string>;
+    h["mcp-session-id"] = sid;
+    h["x-mcp-session-id"] = sid;
 
     // Expose it to the client
     res.setHeader("Mcp-Session-Id", sid);
