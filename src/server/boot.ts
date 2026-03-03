@@ -57,21 +57,25 @@ export async function boot(
 
   await server.connect(transport);
 
-  // Ensure every request has a session id (clients can start without a handshake dance)
-  app.use("/mcp", (req, res, next) => {
-    const sid =
-      (req.header("Mcp-Session-Id") ?? req.header("x-mcp-session-id") ?? "").trim() || randomUUID();
+// Normalize session headers for the MCP transport.
+// IMPORTANT: Do NOT mint a random session id when the client doesn't provide one.
+// The StreamableHTTP transport creates a session during initialization and returns the id
+// in response headers. If we inject a new id here, the transport will reply "Session not found".
+app.use("/mcp", (req, res, next) => {
+  const provided =
+    (req.header("Mcp-Session-Id") ?? req.header("x-mcp-session-id") ?? "").trim();
 
-    // Express/Node types don't like header mutation; we do it intentionally for the transport
+  if (provided) {
     const h = (req as any).headers as Record<string, string>;
-    h["mcp-session-id"] = sid;
-    h["x-mcp-session-id"] = sid;
+    h["mcp-session-id"] = provided;
+    h["x-mcp-session-id"] = provided;
 
-    res.setHeader("Mcp-Session-Id", sid);
-    res.setHeader("x-mcp-session-id", sid);
+    res.setHeader("Mcp-Session-Id", provided);
+    res.setHeader("x-mcp-session-id", provided);
+  }
 
-    next();
-  });
+  next();
+});
 
   // Handle all MCP requests (GET for SSE, POST for JSON-RPC, DELETE for cleanup)
   app.all("/mcp", (req, res) => {
