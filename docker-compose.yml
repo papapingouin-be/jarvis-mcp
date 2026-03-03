@@ -41,3 +41,8 @@ services:
     command: ["npm", "run", "serve:http"]
     profiles:
       - dev
+
+networks:
+  jarvis_net:
+    external: true
+    name: jarvis_net
