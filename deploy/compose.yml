@@ -16,7 +16,7 @@ services:
       NPM_IDENTITY: "jarvis.eureka@gmail.com"
       NPM_SECRET: "Server76"
     ports:
-      - "127.0.0.1:7010:7010"
+      - "7010:7010"
     volumes:
       # Mount host tools read-only
       - /home/jarvis/tools:/opt/host-tools:ro
