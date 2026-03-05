@@ -775,3 +775,67 @@ Built with ❤️ for the MCP community
 [Report Issues](https://github.com/alexanderop/mcp-server-starter-ts/issues) · [Request Features](https://github.com/alexanderop/mcp-server-starter-ts/issues) · [Documentation](https://modelcontextprotocol.io)
 
 </div>
+## 🔬 HTTP MCP test rapide avec `curl`
+
+### Lancer en stdio
+
+```bash
+npm run serve:stdio
+```
+
+### Lancer en HTTP
+
+```bash
+STARTER_TRANSPORT=http PORT=3000 npm run build && node build/index.js
+```
+
+### Séquence MCP HTTP (initialize → initialized → tools/list → tools/call)
+
+```bash
+BASE_URL="http://localhost:3000/mcp"
+
+# 1) initialize (sans SID explicite pour vérifier qu'il est généré)
+INIT_HEADERS=$(mktemp)
+curl -sS -D "$INIT_HEADERS" -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}' \
+  "$BASE_URL"
+
+SID=$(awk 'BEGIN{IGNORECASE=1} /^Mcp-Session-Id:/{print $2}' "$INIT_HEADERS" | tr -d '\r')
+if [ -z "$SID" ]; then
+  SID=$(awk 'BEGIN{IGNORECASE=1} /^x-mcp-session-id:/{print $2}' "$INIT_HEADERS" | tr -d '\r')
+fi
+
+echo "SID=$SID"
+
+# 2) notifications/initialized
+curl -sS -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H "Mcp-Session-Id: $SID" -H "x-mcp-session-id: $SID" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+  "$BASE_URL"
+
+# 3) tools/list
+curl -sS -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H "Mcp-Session-Id: $SID" -H "x-mcp-session-id: $SID" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  "$BASE_URL"
+
+# 4) tools/call diagnose
+curl -sS -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H "Mcp-Session-Id: $SID" -H "x-mcp-session-id: $SID" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"diagnose","arguments":{}}}' \
+  "$BASE_URL"
+```
+
+## 🐳 Portainer / Compose
+
+- Le service fonctionne avec des variables injectées directement par Portainer (pas besoin de `env_file`).
+- Si l’hôte utilise `docker-compose` v1.29 (sans plugin `docker compose`), utilisez simplement :
+
+```bash
+docker-compose up --build -d
+```
+

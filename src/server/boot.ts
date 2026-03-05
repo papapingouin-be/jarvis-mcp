@@ -1,98 +1,161 @@
-import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { RequestHandler } from "express";
 import cors from "cors";
 import { config } from "dotenv";
-import express from "express";
+import express, { type Express, type Request, type Response } from "express";
 import { autoRegisterModules } from "../registry/auto-loader.js";
+import { setRuntimeState } from "./runtime-state.js";
+import {
+  MCP_SESSION_HEADER,
+  MCP_SESSION_HEADER_LOWER,
+  resolveSessionId,
+} from "./session.js";
 
 type TransportMode = "stdio" | "http";
 
-// Load environment variables from .env file
 config();
 
-export async function boot(
-  mode?: TransportMode
-): Promise<void> {
-  const transportMode = mode ?? (process.env.STARTER_TRANSPORT as TransportMode | undefined) ?? "stdio";
-  const server = new McpServer({
-    name: "mcp-server-starter",
-    version: "1.0.0",
-    capabilities: {
-      tools: {},
-      resources: {},
-      prompts: {},
-      completions: {},
-    },
-  });
+const SERVER_NAME = "mcp-server-starter";
+const SERVER_VERSION = "1.0.0";
 
-  await autoRegisterModules(server);
-
-  if (transportMode === "stdio") {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    console.error("MCP Server Starter running on stdio");
-    return;
-  }
-
-  // HTTP mode with SSE support
+export function createApp(corsOrigin: string): Express {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
-
-
-  const corsOrigin = process.env.CORS_ORIGIN ?? "*";
   app.use(cors({
     origin: corsOrigin,
     credentials: true,
     methods: ["GET", "POST", "OPTIONS", "DELETE"],
-    allowedHeaders: ["Content-Type", "Mcp-Session-Id", "x-mcp-session-id", "x-mcp-session"],
-    exposedHeaders: ["Mcp-Session-Id", "x-mcp-session-id"],
+    allowedHeaders: ["Content-Type", MCP_SESSION_HEADER, MCP_SESSION_HEADER_LOWER, "x-mcp-session"],
+    exposedHeaders: [MCP_SESSION_HEADER, MCP_SESSION_HEADER_LOWER],
   }));
+  return app;
+}
 
-  // Create transport with session support
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID()
+export function createTransport(): StreamableHTTPServerTransport {
+  return new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => resolveSessionId({}).sessionId,
   });
+}
+
+export function sessionMiddleware(): RequestHandler {
+  return (req, res, next) => {
+    const originalSetHeader = res.setHeader.bind(res);
+    res.setHeader = (name: string, value: string | number | readonly string[]) => {
+      originalSetHeader(name, value);
+      const lower = name.toLowerCase();
+      if (lower === MCP_SESSION_HEADER.toLowerCase()) {
+        originalSetHeader(MCP_SESSION_HEADER_LOWER, value);
+      } else if (lower === MCP_SESSION_HEADER_LOWER) {
+        originalSetHeader(MCP_SESSION_HEADER, value);
+      }
+      return res;
+    };
+
+    const hasSessionHeader = Boolean(req.header(MCP_SESSION_HEADER) ?? req.header(MCP_SESSION_HEADER_LOWER));
+    const isInitialize = req.method === "POST" && req.body?.method === "initialize";
+
+    if (!hasSessionHeader && isInitialize) {
+      next();
+      return;
+    }
+
+    const { sessionId, source } = resolveSessionId(req.headers as Record<string, string | string[] | undefined>);
+    req.headers[MCP_SESSION_HEADER.toLowerCase()] = sessionId;
+    req.headers[MCP_SESSION_HEADER_LOWER] = sessionId;
+    res.setHeader(MCP_SESSION_HEADER, sessionId);
+
+    if (source === "generated") {
+      console.log(`[mcp/http] generated session id for ${req.method} ${req.path}`);
+    }
+
+    next();
+  };
+}
+
+function shouldRejectSseWithoutInitialize(req: Request): boolean {
+  if (req.method !== "GET") return false;
+  const accept = String(req.header("accept") ?? "").toLowerCase();
+  return accept.includes("text/event-stream");
+}
+
+function isInitializeRequest(req: Request): boolean {
+  return req.method === "POST" && req.body?.method === "initialize";
+}
+
+function isInitializedNotification(req: Request): boolean {
+  return req.method === "POST" && req.body?.method === "notifications/initialized";
+}
+
+function sendPreInitializeSseError(res: Response): void {
+  res.status(400).json({
+    jsonrpc: "2.0",
+    error: {
+      code: -32000,
+      message: "SSE stream requires an initialized MCP session. Call initialize first, then notifications/initialized.",
+    },
+  });
+}
+
+export async function boot(mode?: TransportMode): Promise<void> {
+  const transportMode = mode ?? (process.env.STARTER_TRANSPORT as TransportMode | undefined) ?? "stdio";
+
+  const server = new McpServer({
+    name: SERVER_NAME,
+    version: SERVER_VERSION
+  });
+
+  const registrationResults = await autoRegisterModules(server);
+  const registeredTools = registrationResults
+    .filter((result) => result.success && result.type === "tool")
+    .map((result) => result.name);
+
+  setRuntimeState({
+    transport: transportMode,
+    tools: registeredTools,
+    serverName: SERVER_NAME,
+    serverVersion: SERVER_VERSION,
+    startedAt: Date.now(),
+  });
+
+  if (transportMode === "stdio") {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("[mcp/stdio] server running on stdio");
+    return;
+  }
+
+  const corsOrigin = process.env.CORS_ORIGIN ?? "*";
+  const app = createApp(corsOrigin);
+  const transport = createTransport();
 
   await server.connect(transport);
 
-// Normalize session headers for the MCP transport.
-// IMPORTANT: Do NOT mint a random session id when the client doesn't provide one.
-// The StreamableHTTP transport creates a session during initialization and returns the id
-// in response headers. If we inject a new id here, the transport will reply "Session not found".
-app.use("/mcp", (req, res, next) => {
-  const provided =
-    (req.header("Mcp-Session-Id") ?? req.header("x-mcp-session-id") ?? "").trim();
-
-  if (provided) {
-    const h = (req as any).headers as Record<string, string>;
-    h["mcp-session-id"] = provided;
-    h["x-mcp-session-id"] = provided;
-
-    res.setHeader("Mcp-Session-Id", provided);
-    res.setHeader("x-mcp-session-id", provided);
-  }
-
-  next();
-});
-
-  // Handle all MCP requests (GET for SSE, POST for JSON-RPC, DELETE for cleanup)
+  app.use("/mcp", sessionMiddleware());
   app.all("/mcp", (req, res) => {
+    if (shouldRejectSseWithoutInitialize(req) && !req.header(MCP_SESSION_HEADER) && !req.header(MCP_SESSION_HEADER_LOWER)) {
+      sendPreInitializeSseError(res);
+      return;
+    }
+
+    if (isInitializeRequest(req)) {
+      console.log("[mcp/http] initialize request received");
+    } else if (isInitializedNotification(req)) {
+      console.log("[mcp/http] initialized notification received");
+    }
+
     void transport.handleRequest(req, res, req.body);
   });
 
-
   const port = Number(process.env.PORT ?? 3000);
   const httpServer = app.listen(port, () => {
-    console.log(`MCP Server Starter (HTTP) listening on http://localhost:${String(port)}/mcp`);
-    console.log(`SSE endpoint: GET http://localhost:${String(port)}/mcp`);
-    console.log(`JSON-RPC endpoint: POST http://localhost:${String(port)}/mcp`);
-    console.log(`CORS origin: ${corsOrigin}`);
+    console.log(`[mcp/http] listening on http://localhost:${String(port)}/mcp`);
+    console.log(`[mcp/http] cors origin: ${corsOrigin}`);
   });
 
   process.on("SIGINT", () => {
-    console.log("Shutting down HTTP server...");
+    console.log("[mcp/http] shutting down...");
     void transport.close();
     httpServer.close(() => {
       process.exit(0);
