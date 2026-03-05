@@ -7,31 +7,29 @@ const systemInfoModule: RegisterableModule = {
   name: "system-info",
   description: "Get basic system information about the server",
   register(server: McpServer) {
-    server.resource(
+    server.registerResource(
       "system-info",
       "system://info",
       {
-        name: "System Information",
+        title: "System Information",
         description: "Get basic system information about the server",
       },
-      () => {
-        return {
-          contents: [
-            {
-              uri: "system://info",
-              mimeType: "application/json",
-              text: JSON.stringify({
-                platform: os.platform(),
-                architecture: os.arch(),
-                nodeVersion: process.version,
-                uptime: os.uptime(),
-                totalMemory: os.totalmem(),
-                freeMemory: os.freemem(),
-              }, null, 2),
-            },
-          ],
-        };
-      }
+      async () => ({
+        contents: [
+          {
+            uri: "system://info",
+            mimeType: "application/json",
+            text: JSON.stringify({
+              platform: os.platform(),
+              architecture: os.arch(),
+              nodeVersion: process.version,
+              uptime: os.uptime(),
+              totalMemory: os.totalmem(),
+              freeMemory: os.freemem(),
+            }, null, 2),
+          },
+        ],
+      })
     );
   }
 };

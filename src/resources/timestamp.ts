@@ -1,8 +1,12 @@
 import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RegisterableModule } from "../registry/types.js";
-import type { McpServer} from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 type TimestampFormat = "iso" | "unix" | "readable";
+
+type TimestampParams = {
+  format?: string;
+};
 
 const MIME_TYPE_PLAIN = "text/plain";
 const VALID_FORMATS: Array<TimestampFormat> = ["iso", "unix", "readable"];
@@ -23,21 +27,20 @@ const timestampModule: RegisterableModule = {
           ],
         }),
         complete: {
-          format: (value) => {
+          format: (value: string) => {
             const normalizedValue = value.toLowerCase();
-            return VALID_FORMATS.filter(f => 
+            return VALID_FORMATS.filter(f =>
               f.toLowerCase().startsWith(normalizedValue)
             );
           },
         },
       }),
       {
-        name: "Timestamp",
+        title: "Timestamp",
         description: "Get current timestamp in various formats",
       },
-      (uri, { format }) => {
+      async (uri: URL, { format }: TimestampParams) => {
         const now = new Date();
-        let timestamp: string;
 
         if (format === undefined) {
           return {
@@ -64,28 +67,17 @@ const timestampModule: RegisterableModule = {
         }
 
         const validFormat = format as TimestampFormat;
-        
-        switch (validFormat) {
-          case "iso":
-            timestamp = now.toISOString();
-            break;
-          case "unix":
-            timestamp = Math.floor(now.getTime() / 1000).toString();
-            break;
-          case "readable":
-            timestamp = now.toLocaleString();
-            break;
-          default: {
-            const exhaustiveCheck: never = validFormat;
-            return exhaustiveCheck;
-          }
-        }
+        const timestamp = validFormat === "iso"
+          ? now.toISOString()
+          : validFormat === "unix"
+            ? Math.floor(now.getTime() / 1000).toString()
+            : now.toLocaleString();
 
         return {
           contents: [
             {
               uri: uri.href,
-              mimeType: "text/plain",
+              mimeType: MIME_TYPE_PLAIN,
               text: timestamp,
             },
           ],
