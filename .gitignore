@@ -7,8 +7,11 @@ build/
 # Exclude test output specifically
 build/tests/
 
-# Environment variables
+# Environment and secrets
 .env
+deploy/.env
+.secrets/
+*secrets*
 
 # Logs
 *.log
@@ -20,3 +23,6 @@ build/tests/
 
 # Documentation
 docs/
+!scripts/load_secrets.sh
+!scripts/preflight_secrets.sh
+!secrets.example.env

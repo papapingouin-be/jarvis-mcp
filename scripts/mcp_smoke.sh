@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+JARVIS_REQUIRED_SECRETS=""
+# shellcheck disable=SC1091
+. "$(dirname "$0")/load_secrets.sh"
+
 BASE_URL="${1:-http://localhost:3000/mcp}"
 
 echo "[1/4] initialize -> $BASE_URL"

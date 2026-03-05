@@ -1,8 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
-# Expected env vars:
-# NPM_URL, NPM_IDENTITY, NPM_SECRET
+JARVIS_REQUIRED_SECRETS="NPM_URL NPM_IDENTITY NPM_SECRET"
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../scripts/load_secrets.sh"
+
 # Args: domain forward_host forward_port
 DOMAIN="${1:-}"
 FWD_HOST="${2:-}"
@@ -18,8 +20,6 @@ if [ ! -x /opt/host-tools/npm_add_service.sh ]; then
   exit 3
 fi
 
-export NPM_URL="${NPM_URL:-}"
-export NPM_IDENTITY="${NPM_IDENTITY:-}"
-export NPM_SECRET="${NPM_SECRET:-}"
+export NPM_URL NPM_IDENTITY NPM_SECRET
 
 exec /opt/host-tools/npm_add_service.sh "$DOMAIN" "$FWD_HOST" "$FWD_PORT"

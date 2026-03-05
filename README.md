@@ -236,6 +236,49 @@ docker compose --profile dev up mcp-server-starter-dev
 
 This mounts your source code and enables live reloading on port 3001.
 
+## 🔐 Secrets Management (single local file)
+
+This repository is configured to keep sensitive values out of Git.
+
+1. Create a local secrets file from the template:
+   ```bash
+   mkdir -p .secrets
+   cp secrets.example.env .secrets/jarvis.env
+   ```
+   You can also store it outside the repo (recommended), e.g. `/home/jarvis/.secrets/jarvis.env`.
+
+2. Fill each value in `.env` format (`KEY=value`, one per line).
+
+3. Load/check before running scripts:
+   ```bash
+   JARVIS_SECRETS_FILE=/home/jarvis/.secrets/jarvis.env ./scripts/preflight_secrets.sh
+   ```
+
+4. Run shell scripts that need secrets:
+   ```bash
+   JARVIS_SECRETS_FILE=/home/jarvis/.secrets/jarvis.env ./tools/npm_add_proxy.sh my.domain local-host 8080
+   ```
+
+### Portainer deployment
+
+- `deploy/compose.yml` no longer contains hardcoded sensitive values.
+- For Portainer Stack deployment, define `NPM_URL`, `NPM_IDENTITY`, `NPM_SECRET` (and optional `STARTER_TRANSPORT`, `PORT`, `TZ`) in Portainer environment variables.
+- If you deploy from shell, export variables from your local file first:
+  ```bash
+  set -a
+  . /home/jarvis/.secrets/jarvis.env
+  set +a
+  docker compose -f deploy/compose.yml up -d --build
+  ```
+
+### Optional remote sanitization
+
+If a Git remote URL contains `https://user:***@host/...`, sanitize it:
+
+```bash
+./scripts/sanitize_git_remote.sh origin
+```
+
 ## 📁 Project Structure
 
 ```
@@ -838,4 +881,3 @@ curl -sS -H 'content-type: application/json' \
 ```bash
 docker-compose up --build -d
 ```
-
