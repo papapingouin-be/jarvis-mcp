@@ -17,7 +17,7 @@ const npmAddProxyModule: RegisterableModule = {
       {
         domain: z.string().min(1).describe("Domain name to create/update in NPM (e.g. n8n.jarvis.example.com)"),
         forward_host: z.string().min(1).describe("Upstream IP/hostname (e.g. 192.168.11.206)"),
-        forward_port: z.number().int().positive().describe("Upstream port (e.g. 5678)"),
+        forward_port: z.number().int().positive().describe("Upstream port (ex 5678)"),
       },
       async (args) => {
         const cmd = "/app/tools/npm_add_proxy.sh";
