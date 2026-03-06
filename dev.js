@@ -84,7 +84,7 @@ server.on('close', (code) => {
 // Print example commands
 console.log(`${CYAN}Example commands:${RESET}`);
 console.log(`${DIM}1. Initialize connection:${RESET}`);
-console.log('   {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"1.0.0","capabilities":{},"clientInfo":{"name":"dev-client","version":"1.0.0"}},"id":1}\n');
+console.log('   {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"1.0.7","capabilities":{},"clientInfo":{"name":"dev-client","version":"1.0.0"}},"id":1}\n');
 console.log(`${DIM}2. List available tools:${RESET}`);
 console.log('   {"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}\n');
 console.log(`${DIM}3. Call echo tool:${RESET}`);
