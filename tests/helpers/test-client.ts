@@ -31,7 +31,7 @@ export class TestClient {
   constructor(config: TestClientConfig = {}) {
     this.config = {
       name: config.name ?? "test-client",
-      version: config.version ?? "1.0.0",
+      version: config.version ?? "1.0.5",
       capabilities: config.capabilities ?? {},
       stderr: config.stderr ?? "ignore",
       serverPath: config.serverPath,
