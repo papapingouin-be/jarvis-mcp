@@ -10,7 +10,7 @@ const state: RuntimeState = {
   transport: "stdio",
   tools: [],
   serverName: "mcp-server-starter",
-  serverVersion: "1.0.0",
+  serverVersion: "1.0.3",
   startedAt: Date.now(),
 };
 
