@@ -18,7 +18,7 @@ type TransportMode = "stdio" | "http";
 config();
 
 const SERVER_NAME = "mcp-server-starter";
-const SERVER_VERSION = "1.0.0";
+const SERVER_VERSION = "1.0.2";
 
 export function createApp(corsOrigin: string): Express {
   const app = express();
