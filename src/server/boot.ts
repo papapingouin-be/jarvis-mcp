@@ -10,7 +10,6 @@ import { setRuntimeState } from "./runtime-state.js";
 import {
   MCP_SESSION_HEADER,
   MCP_SESSION_HEADER_LOWER,
-  resolveSessionId,
 } from "./session.js";
 
 type TransportMode = "stdio" | "http";
@@ -22,52 +21,55 @@ const SERVER_VERSION = "1.0.2";
 
 export function createApp(corsOrigin: string): Express {
   const app = express();
+
   app.use(express.json({ limit: "1mb" }));
-  app.use(cors({
-    origin: corsOrigin,
-    credentials: true,
-    methods: ["GET", "POST", "OPTIONS", "DELETE"],
-    allowedHeaders: ["Content-Type", MCP_SESSION_HEADER, MCP_SESSION_HEADER_LOWER, "x-mcp-session"],
-    exposedHeaders: [MCP_SESSION_HEADER, MCP_SESSION_HEADER_LOWER],
-  }));
+  app.use(
+    cors({
+      origin: corsOrigin,
+      credentials: true,
+      methods: ["GET", "POST", "OPTIONS", "DELETE"],
+      allowedHeaders: [
+        "Content-Type",
+        MCP_SESSION_HEADER,
+        MCP_SESSION_HEADER_LOWER,
+        "x-mcp-session",
+      ],
+      exposedHeaders: [MCP_SESSION_HEADER, MCP_SESSION_HEADER_LOWER],
+    }),
+  );
+
   return app;
 }
 
 export function createTransport(): StreamableHTTPServerTransport {
-  return new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => resolveSessionId({}).sessionId,
-  });
+  return new StreamableHTTPServerTransport();
 }
 
 export function sessionMiddleware(): RequestHandler {
   return (req, res, next) => {
     const originalSetHeader = res.setHeader.bind(res);
+
     res.setHeader = (name: string, value: string | number | readonly string[]) => {
       originalSetHeader(name, value);
+
       const lower = name.toLowerCase();
       if (lower === MCP_SESSION_HEADER.toLowerCase()) {
         originalSetHeader(MCP_SESSION_HEADER_LOWER, value);
       } else if (lower === MCP_SESSION_HEADER_LOWER) {
         originalSetHeader(MCP_SESSION_HEADER, value);
       }
+
       return res;
     };
 
-    const hasSessionHeader = Boolean(req.header(MCP_SESSION_HEADER) ?? req.header(MCP_SESSION_HEADER_LOWER));
-    const isInitialize = req.method === "POST" && req.body?.method === "initialize";
+    const incomingSessionId =
+      req.header(MCP_SESSION_HEADER) ??
+      req.header(MCP_SESSION_HEADER_LOWER) ??
+      req.header("x-mcp-session");
 
-    if (!hasSessionHeader && isInitialize) {
-      next();
-      return;
-    }
-
-    const { sessionId, source } = resolveSessionId(req.headers as Record<string, string | string[] | undefined>);
-    req.headers[MCP_SESSION_HEADER.toLowerCase()] = sessionId;
-    req.headers[MCP_SESSION_HEADER_LOWER] = sessionId;
-    res.setHeader(MCP_SESSION_HEADER, sessionId);
-
-    if (source === "generated") {
-      console.log(`[mcp/http] generated session id for ${req.method} ${req.path}`);
+    if (incomingSessionId) {
+      req.headers[MCP_SESSION_HEADER.toLowerCase()] = incomingSessionId;
+      req.headers[MCP_SESSION_HEADER_LOWER] = incomingSessionId;
     }
 
     next();
@@ -76,8 +78,17 @@ export function sessionMiddleware(): RequestHandler {
 
 function shouldRejectSseWithoutInitialize(req: Request): boolean {
   if (req.method !== "GET") return false;
+
   const accept = String(req.header("accept") ?? "").toLowerCase();
   return accept.includes("text/event-stream");
+}
+
+function hasSessionHeader(req: Request): boolean {
+  return Boolean(
+    req.header(MCP_SESSION_HEADER) ??
+      req.header(MCP_SESSION_HEADER_LOWER) ??
+      req.header("x-mcp-session"),
+  );
 }
 
 function isInitializeRequest(req: Request): boolean {
@@ -93,17 +104,20 @@ function sendPreInitializeSseError(res: Response): void {
     jsonrpc: "2.0",
     error: {
       code: -32000,
-      message: "SSE stream requires an initialized MCP session. Call initialize first, then notifications/initialized.",
+      message:
+        "SSE stream requires an initialized MCP session. Call initialize first, then notifications/initialized.",
     },
+    id: null,
   });
 }
 
 export async function boot(mode?: TransportMode): Promise<void> {
-  const transportMode = mode ?? (process.env.STARTER_TRANSPORT as TransportMode | undefined) ?? "stdio";
+  const transportMode =
+    mode ?? (process.env.STARTER_TRANSPORT as TransportMode | undefined) ?? "stdio";
 
   const server = new McpServer({
     name: SERVER_NAME,
-    version: SERVER_VERSION
+    version: SERVER_VERSION,
   });
 
   const registrationResults = await autoRegisterModules(server);
@@ -133,8 +147,9 @@ export async function boot(mode?: TransportMode): Promise<void> {
   await server.connect(transport);
 
   app.use("/mcp", sessionMiddleware());
+
   app.all("/mcp", (req, res) => {
-    if (shouldRejectSseWithoutInitialize(req) && !req.header(MCP_SESSION_HEADER) && !req.header(MCP_SESSION_HEADER_LOWER)) {
+    if (shouldRejectSseWithoutInitialize(req) && !hasSessionHeader(req)) {
       sendPreInitializeSseError(res);
       return;
     }
