@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { randomUUID } from "node:crypto";
 import type { RequestHandler } from "express";
 import cors from "cors";
 import { config } from "dotenv";
@@ -42,7 +43,9 @@ export function createApp(corsOrigin: string): Express {
 }
 
 export function createTransport(): StreamableHTTPServerTransport {
-  return new StreamableHTTPServerTransport();
+  return new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
 }
 
 export function sessionMiddleware(): RequestHandler {
@@ -177,3 +180,4 @@ export async function boot(mode?: TransportMode): Promise<void> {
     });
   });
 }
+
