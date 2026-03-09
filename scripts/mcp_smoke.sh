@@ -46,7 +46,7 @@ TOOLS=$(curl -sS -H 'content-type: application/json' \
 
 echo "$TOOLS"
 printf '%s' "$TOOLS" | grep -q '"echo"'
-printf '%s' "$TOOLS" | grep -q '"npm_add_proxy"'
+printf '%s' "$TOOLS" | grep -q '"jarvis_npm"'
 printf '%s' "$TOOLS" | grep -q '"diagnose"'
 
 echo "[4/4] tools/call diagnose"
@@ -60,3 +60,4 @@ echo "$DIAG"
 printf '%s' "$DIAG" | grep -q 'ok'
 
 echo "Smoke test: OK"
+

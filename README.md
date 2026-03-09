@@ -256,7 +256,7 @@ This repository is configured to keep sensitive values out of Git.
 
 4. Run shell scripts that need secrets:
    ```bash
-   JARVIS_SECRETS_FILE=/home/jarvis/.secrets/jarvis.env ./tools/npm_add_proxy.sh my.domain local-host 8080
+   JARVIS_SECRETS_FILE=/home/jarvis/.secrets/jarvis.env ./tools/jarvis_npm.sh add my.domain local-host 8080
    ```
 
 ### Portainer deployment
@@ -881,3 +881,4 @@ curl -sS -H 'content-type: application/json' \
 ```bash
 docker-compose up --build -d
 ```
+
