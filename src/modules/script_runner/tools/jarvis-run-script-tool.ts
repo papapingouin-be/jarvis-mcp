@@ -8,6 +8,7 @@ const inputSchema = {
   script_name: z.string().min(1).max(128),
   phase: z.enum(["collect", "execute"]),
   confirmed: z.boolean().optional(),
+  verbose: z.boolean().optional().default(true),
   params: z.record(z.string(), scriptParamValueSchema).optional(),
 };
 
@@ -43,6 +44,7 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
                 error: {
                   code: safeError.code,
                   message: safeError.safeMessage,
+                  context: safeError.context ?? {},
                 },
               }),
             },

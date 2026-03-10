@@ -32,7 +32,7 @@ describe("script runner service", () => {
     );
   });
 
-  it("executes with mocked runner", async () => {
+  it("executes with mocked runner and includes trace by default", async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), "script-runner-"));
 
     try {
@@ -56,7 +56,7 @@ describe("script runner service", () => {
           capturedArgs = args;
           return {
             stdout: "{\"summary\":\"ok\",\"status\":\"done\"}",
-            stderr: "",
+            stderr: "step 1\nstep 2",
           };
         },
       });
@@ -78,6 +78,48 @@ describe("script runner service", () => {
       assert(capturedArgs.includes("--param"));
       assert(capturedArgs.includes("vmid=9100"));
       assert(capturedArgs.includes("template=debian"));
+
+      const trace = result.result.trace;
+      assert(Array.isArray(trace));
+      assert.deepStrictEqual(trace, ["step 1", "step 2"]);
+      assert.strictEqual(result.result.live_logs_supported, false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("can disable verbose trace", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "script-runner-"));
+
+    try {
+      const fileName = "approved.sh";
+      await writeFile(path.join(tempDir, fileName), "#!/usr/bin/env bash\necho '{}'\n", "utf8");
+
+      const registry = new ApprovedScriptRegistry({
+        "approved.sh": {
+          name: "approved.sh",
+          file_name: fileName,
+          required_env: [],
+        },
+      });
+
+      const service = new ScriptRunnerService({
+        scriptsRoot: tempDir,
+        registry,
+        execRunner: async () => ({
+          stdout: "{\"summary\":\"ok\"}",
+          stderr: "hidden-trace",
+        }),
+      });
+
+      const result = await service.run({
+        script_name: "approved.sh",
+        phase: "collect",
+        verbose: false,
+      });
+
+      assert.strictEqual(result.result.trace, undefined);
+      assert.strictEqual(result.result.live_logs_supported, undefined);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

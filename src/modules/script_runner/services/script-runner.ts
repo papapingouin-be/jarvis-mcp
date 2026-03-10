@@ -9,6 +9,13 @@ import type { ScriptRunSuccess } from "../types/domain.js";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_TIMEOUT_MS = 120_000;
+const TRACE_MAX_LINES = 200;
+const SENSITIVE_ENV_NAMES = [
+  "PROXMOX_PASSWORD",
+  "PROXMOX_API_TOKEN_SECRET",
+  "PROXMOX_API_TOKEN_ID",
+  "NPM_SECRET",
+];
 
 type ExecResult = {
   stdout: string;
@@ -74,6 +81,29 @@ function buildScriptArgs(input: JarvisRunScriptInput): Array<string> {
   return args;
 }
 
+function sanitizeLogLine(line: string): string {
+  let result = line;
+
+  for (const envName of SENSITIVE_ENV_NAMES) {
+    const rawValue = process.env[envName]?.trim();
+    if (typeof rawValue === "string" && rawValue.length >= 3) {
+      result = result.split(rawValue).join("***");
+    }
+  }
+
+  result = result.replace(/(password|token|secret)=([^\s]+)/gi, "$1=***");
+  return result;
+}
+
+function buildTraceLines(stderr: string): Array<string> {
+  return stderr
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map(sanitizeLogLine)
+    .slice(0, TRACE_MAX_LINES);
+}
+
 export class ScriptRunnerService {
   private readonly scriptsRoot: string;
   private readonly registry: ApprovedScriptRegistry;
@@ -116,11 +146,20 @@ export class ScriptRunnerService {
       const execution = await this.execRunner(scriptPath, args, process.env);
       const parsed = parseScriptJsonOutput(execution.stdout);
 
+      const includeTrace = input.verbose !== false;
+      const result = includeTrace
+        ? {
+          ...parsed,
+          trace: buildTraceLines(execution.stderr),
+          live_logs_supported: false,
+        }
+        : parsed;
+
       return {
         ok: true,
         script_name: script.name,
         phase: input.phase,
-        result: parsed,
+        result,
       };
     } catch (error: unknown) {
       if (error instanceof ScriptRunnerError) {
@@ -128,19 +167,28 @@ export class ScriptRunnerService {
       }
 
       const execError = error as ExecError;
-      const stdout = toExecResult(execError.stdout ?? "", execError.stderr ?? "").stdout;
+      const execution = toExecResult(execError.stdout ?? "", execError.stderr ?? "");
+      const trace = buildTraceLines(execution.stderr);
+      const stdout = execution.stdout;
+
       if (stdout.trim().length > 0) {
         try {
           const parsed = parseScriptJsonOutput(stdout);
           const summary = parsed.summary;
           if (typeof summary === "string" && summary.trim().length > 0) {
-            throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", summary.trim());
+            throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", summary.trim(), {
+              trace,
+              live_logs_supported: false,
+            });
           }
         } catch {
         }
       }
 
-      throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", "Script execution failed");
+      throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", "Script execution failed", {
+        trace,
+        live_logs_supported: false,
+      });
     }
   }
 }

@@ -12,6 +12,16 @@ describe("jarvis_run_script input schema", () => {
     assert.strictEqual(result.success, true);
   });
 
+  it("accepts verbose flag", () => {
+    const result = jarvisRunScriptInputSchema.safeParse({
+      script_name: "proxmox-CTDEV.sh",
+      phase: "collect",
+      verbose: true,
+    });
+
+    assert.strictEqual(result.success, true);
+  });
+
   it("rejects invalid phase", () => {
     const result = jarvisRunScriptInputSchema.safeParse({
       script_name: "proxmox-CTDEV.sh",

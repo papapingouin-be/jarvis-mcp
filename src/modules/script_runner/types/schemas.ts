@@ -7,6 +7,7 @@ export const jarvisRunScriptInputSchema = z.object({
   script_name: z.string().min(1).max(128),
   phase: scriptPhaseSchema,
   confirmed: z.boolean().optional(),
+  verbose: z.boolean().optional().default(true),
   params: z.record(z.string(), scriptParamValueSchema).optional(),
 });
 
