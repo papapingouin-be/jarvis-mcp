@@ -11,12 +11,17 @@ services:
     environment:
       STARTER_TRANSPORT: "${STARTER_TRANSPORT:-http}"
       PORT: "${PORT:-7010}"
+      CORS_ORIGIN: "${CORS_ORIGIN:-*}"
       TZ: "${TZ:-Europe/Brussels}"
+      DATABASE_URL: "${DATABASE_URL:-}"
+      MASTER_KEY_FILE: "${MASTER_KEY_FILE:-}"
+      MASTER_KEY: "${MASTER_KEY:-}"
+      JARVIS_GIT_BRIDGE_PG_MODULE: "${JARVIS_GIT_BRIDGE_PG_MODULE:-pg}"
       NPM_URL: "${NPM_URL}"
       NPM_IDENTITY: "${NPM_IDENTITY}"
       NPM_SECRET: "${NPM_SECRET}"
     ports:
-      - "7010:7010"
+      - "${PORT:-7010}:${PORT:-7010}"
     volumes:
       # Mount host tools read-only
       - /home/jarvis/tools:/opt/host-tools:ro
