@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  jarvis-mcp:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: jarvis-mcp:latest
+    environment:
+      STARTER_TRANSPORT: "http"
+      PORT: "3000"
+      DATABASE_URL: "postgresql://jarvis:change-me@postgres:5432/jarvis"
+      MASTER_KEY_FILE: "/run/secrets/jarvis_master_key"
+    secrets:
+      - jarvis_master_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: change-me
+      POSTGRES_DB: jarvis
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+volumes:
+  pg_data:
+
+secrets:
+  jarvis_master_key:
+    file: ../.secrets/master_key.b64
