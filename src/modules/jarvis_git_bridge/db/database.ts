@@ -16,8 +16,52 @@ type PgModule = {
   Pool: new (config: { connectionString: string }) => PgPoolClient;
 };
 
+function buildDatabaseUrlFromJarvisTools(): string | null {
+  const hostPort = process.env.jarvis_tools_PG_URL?.trim();
+  const database = process.env.jarvis_tools_PG_DB?.trim();
+  const user = process.env.jarvis_tools_PG_USER?.trim();
+  const password = process.env.jarvis_tools_PG_PASSWORD?.trim();
+
+  if (!hostPort || !database || !user || !password) {
+    return null;
+  }
+
+  const encodedUser = encodeURIComponent(user);
+  const encodedPassword = encodeURIComponent(password);
+
+  if (hostPort.startsWith("postgres://") || hostPort.startsWith("postgresql://")) {
+    return `${hostPort.replace(/\/+$/g, "")}/${database}`;
+  }
+
+  return `postgresql://${encodedUser}:${encodedPassword}@${hostPort}/${database}`;
+}
+
+function resolveDatabaseConnectionString(): string {
+  const direct = process.env.DATABASE_URL?.trim();
+  if (direct) {
+    return direct;
+  }
+
+  const jarvisToolsDirect = process.env.jarvis_tools_DATABASE_URL?.trim();
+  if (jarvisToolsDirect) {
+    return jarvisToolsDirect;
+  }
+
+  const fromParts = buildDatabaseUrlFromJarvisTools();
+  if (fromParts) {
+    return fromParts;
+  }
+
+  throw new JarvisGitBridgeError(
+    "DATABASE_URL_MISSING",
+    "DATABASE_URL is required (or jarvis_tools_PG_URL/jarvis_tools_PG_DB/jarvis_tools_PG_USER/jarvis_tools_PG_PASSWORD)"
+  );
+}
+
 async function loadPgModule(): Promise<PgModule> {
-  const moduleName = process.env.JARVIS_GIT_BRIDGE_PG_MODULE?.trim() || "pg";
+  const moduleName = process.env.JARVIS_GIT_BRIDGE_PG_MODULE?.trim()
+    || process.env.jarvis_tools_GIT_BRIDGE_PG_MODULE?.trim()
+    || "pg";
 
   try {
     return await import(moduleName) as PgModule;
@@ -30,11 +74,7 @@ async function loadPgModule(): Promise<PgModule> {
 }
 
 export async function createDatabaseClientFromEnv(): Promise<DatabaseClient> {
-  const connectionString = process.env.DATABASE_URL?.trim();
-  if (typeof connectionString !== "string" || connectionString.length === 0) {
-    throw new JarvisGitBridgeError("DATABASE_URL_MISSING", "DATABASE_URL is required");
-  }
-
+  const connectionString = resolveDatabaseConnectionString();
   const pgModule = await loadPgModule();
   const pool = new pgModule.Pool({ connectionString });
 

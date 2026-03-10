@@ -19,13 +19,15 @@ function toValidKey(raw: string): Buffer {
 }
 
 export async function loadMasterKeyFromEnv(): Promise<Buffer> {
-  const keyFile = process.env.MASTER_KEY_FILE?.trim();
+  const keyFile = process.env.MASTER_KEY_FILE?.trim()
+    || process.env.jarvis_tools_MASTER_KEY_FILE?.trim();
   if (typeof keyFile === "string" && keyFile.length > 0) {
     const fileContent = await readFile(keyFile, "utf-8");
     return toValidKey(fileContent);
   }
 
-  const inlineKey = process.env.MASTER_KEY?.trim();
+  const inlineKey = process.env.MASTER_KEY?.trim()
+    || process.env.jarvis_tools_MASTER_KEY?.trim();
   if (typeof inlineKey === "string" && inlineKey.length > 0) {
     return toValidKey(inlineKey);
   }

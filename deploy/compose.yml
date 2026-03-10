@@ -9,21 +9,50 @@ services:
     container_name: jarvis_mcp_tools
     restart: unless-stopped
     environment:
-      STARTER_TRANSPORT: "${STARTER_TRANSPORT:-http}"
-      PORT: "${PORT:-7010}"
-      CORS_ORIGIN: "${CORS_ORIGIN:-*}"
-      TZ: "${TZ:-Europe/Brussels}"
-      DATABASE_URL: "${DATABASE_URL:-}"
-      MASTER_KEY_FILE: "${MASTER_KEY_FILE:-}"
-      MASTER_KEY: "${MASTER_KEY:-}"
-      JARVIS_GIT_BRIDGE_PG_MODULE: "${JARVIS_GIT_BRIDGE_PG_MODULE:-pg}"
-      NPM_URL: "${NPM_URL}"
-      NPM_IDENTITY: "${NPM_IDENTITY}"
-      NPM_SECRET: "${NPM_SECRET}"
+      STARTER_TRANSPORT: "${jarvis_tools_STARTER_TRANSPORT:-http}"
+      PORT: "${jarvis_tools_PORT:-7010}"
+      CORS_ORIGIN: "${jarvis_tools_CORS_ORIGIN:-*}"
+      TZ: "${jarvis_tools_TZ:-Europe/Brussels}"
+
+      # New git bridge canonical vars
+      DATABASE_URL: "${jarvis_tools_DATABASE_URL:-}"
+      MASTER_KEY_FILE: "${jarvis_tools_MASTER_KEY_FILE:-}"
+      MASTER_KEY: "${jarvis_tools_MASTER_KEY:-}"
+      JARVIS_GIT_BRIDGE_PG_MODULE: "${jarvis_tools_GIT_BRIDGE_PG_MODULE:-pg}"
+
+      # Pass-through jarvis_tools vars (fallback parsing in app)
+      jarvis_tools_PG_URL: "${jarvis_tools_PG_URL:-}"
+      jarvis_tools_PG_DB: "${jarvis_tools_PG_DB:-}"
+      jarvis_tools_PG_USER: "${jarvis_tools_PG_USER:-}"
+      jarvis_tools_PG_PASSWORD: "${jarvis_tools_PG_PASSWORD:-}"
+      jarvis_tools_DATABASE_URL: "${jarvis_tools_DATABASE_URL:-}"
+
+      # Legacy jarvis_npm tool
+      NPM_URL: "${jarvis_tools_NPM_URL:-}"
+      NPM_IDENTITY: "${jarvis_tools_NPM_IDENTITY:-}"
+      NPM_SECRET: "${jarvis_tools_NPM_SECRET:-}"
+
+      # Optional legacy vars kept for scripts/workflows
+      jarvis_tools_SERVER_URL: "${jarvis_tools_SERVER_URL:-}"
+      jarvis_tools_SERVER_USER: "${jarvis_tools_SERVER_USER:-}"
+      jarvis_tools_SERVER_PASSWORD: "${jarvis_tools_SERVER_PASSWORD:-}"
+      jarvis_tools_PORTAINER_URL: "${jarvis_tools_PORTAINER_URL:-}"
+      jarvis_tools_PORTAINER_USER: "${jarvis_tools_PORTAINER_USER:-}"
+      jarvis_tools_PORTAINER_PASSWORD: "${jarvis_tools_PORTAINER_PASSWORD:-}"
+      jarvis_tools_NPM_BASE_DOMAIN: "${jarvis_tools_NPM_BASE_DOMAIN:-}"
+      jarvis_tools_NPM_DUCKDNS_TOKEN: "${jarvis_tools_NPM_DUCKDNS_TOKEN:-}"
+      jarvis_tools_NPM_DUCKDNS_DOMAIN: "${jarvis_tools_NPM_DUCKDNS_DOMAIN:-}"
+      jarvis_tools_GITEA_TOKEN: "${jarvis_tools_GITEA_TOKEN:-}"
+      jarvis_tools_GITEA_IDENTITY: "${jarvis_tools_GITEA_IDENTITY:-}"
+      jarvis_tools_GITEA_URL: "${jarvis_tools_GITEA_URL:-}"
+      jarvis_tools_GITEA_SSH_HOST: "${jarvis_tools_GITEA_SSH_HOST:-}"
+      jarvis_tools_GITEA_SSH_PORT: "${jarvis_tools_GITEA_SSH_PORT:-}"
+      jarvis_tools_GITHUB_TOKEN: "${jarvis_tools_GITHUB_TOKEN:-}"
+      jarvis_tools_GITHUB_IDENTITY: "${jarvis_tools_GITHUB_IDENTITY:-}"
+      jarvis_tools_GITHUB_URL: "${jarvis_tools_GITHUB_URL:-}"
     ports:
-      - "${PORT:-7010}:${PORT:-7010}"
+      - "${jarvis_tools_PORT:-7010}:${jarvis_tools_PORT:-7010}"
     volumes:
-      # Mount host tools read-only
       - /home/jarvis/tools:/opt/host-tools:ro
     networks:
       - jarvis_net
