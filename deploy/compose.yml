@@ -1,12 +1,12 @@
 version: "3.8"
 
 services:
-  mcp_tools:
+  mcp-server-starter:
     build:
       context: ..
       dockerfile: Dockerfile
     image: jarvis-mcp-tools:local
-    container_name: jarvis_mcp_tools
+    container_name: mcp-server-starter
     restart: unless-stopped
     environment:
       STARTER_TRANSPORT: "${jarvis_tools_STARTER_TRANSPORT:-http}"
@@ -14,25 +14,21 @@ services:
       CORS_ORIGIN: "${jarvis_tools_CORS_ORIGIN:-*}"
       TZ: "${jarvis_tools_TZ:-Europe/Brussels}"
 
-      # New git bridge canonical vars
       DATABASE_URL: "${jarvis_tools_DATABASE_URL:-}"
       MASTER_KEY_FILE: "${jarvis_tools_MASTER_KEY_FILE:-}"
       MASTER_KEY: "${jarvis_tools_MASTER_KEY:-}"
       JARVIS_GIT_BRIDGE_PG_MODULE: "${jarvis_tools_GIT_BRIDGE_PG_MODULE:-pg}"
 
-      # Pass-through jarvis_tools vars (fallback parsing in app)
       jarvis_tools_PG_URL: "${jarvis_tools_PG_URL:-}"
       jarvis_tools_PG_DB: "${jarvis_tools_PG_DB:-}"
       jarvis_tools_PG_USER: "${jarvis_tools_PG_USER:-}"
       jarvis_tools_PG_PASSWORD: "${jarvis_tools_PG_PASSWORD:-}"
       jarvis_tools_DATABASE_URL: "${jarvis_tools_DATABASE_URL:-}"
 
-      # Legacy jarvis_npm tool
       NPM_URL: "${jarvis_tools_NPM_URL:-}"
       NPM_IDENTITY: "${jarvis_tools_NPM_IDENTITY:-}"
       NPM_SECRET: "${jarvis_tools_NPM_SECRET:-}"
 
-      # Optional legacy vars kept for scripts/workflows
       jarvis_tools_SERVER_URL: "${jarvis_tools_SERVER_URL:-}"
       jarvis_tools_SERVER_USER: "${jarvis_tools_SERVER_USER:-}"
       jarvis_tools_SERVER_PASSWORD: "${jarvis_tools_SERVER_PASSWORD:-}"

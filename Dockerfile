@@ -17,5 +17,6 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/build ./build
 COPY --from=build /app/tools ./tools
 
-EXPOSE 3000
+EXPOSE 7010
 CMD ["node", "build/index.js"]
+
