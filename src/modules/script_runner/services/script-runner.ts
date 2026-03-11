@@ -3,21 +3,16 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
-import { ApprovedScriptRegistry } from "./script-registry.js";
+import { ConfiguredScriptRegistry, type ScriptRegistryProvider } from "./script-registry.js";
 import { ScriptRunnerError } from "./errors.js";
 import type { JarvisRunScriptInput } from "../types/schemas.js";
 import type { ScriptRunSuccess } from "../types/domain.js";
+import { getScriptRunnerEnvConfig } from "../../../config/env.js";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_TIMEOUT_MS = 120_000;
 const TRACE_MAX_LINES = 500;
 const JOB_TTL_MS = 60 * 60 * 1000;
-const SENSITIVE_ENV_NAMES = [
-  "PROXMOX_PASSWORD",
-  "PROXMOX_API_TOKEN_SECRET",
-  "PROXMOX_API_TOKEN_ID",
-  "NPM_SECRET",
-];
 
 type ExecResult = {
   stdout: string;
@@ -117,10 +112,10 @@ function buildScriptArgs(input: JarvisRunScriptInput): Array<string> {
   return args;
 }
 
-function sanitizeLogLine(line: string): string {
+function sanitizeLogLine(line: string, sensitiveEnvNames: Array<string>): string {
   let result = line;
 
-  for (const envName of SENSITIVE_ENV_NAMES) {
+  for (const envName of sensitiveEnvNames) {
     const rawValue = process.env[envName]?.trim();
     if (typeof rawValue === "string" && rawValue.length >= 3) {
       result = result.split(rawValue).join("***");
@@ -131,29 +126,34 @@ function sanitizeLogLine(line: string): string {
   return result;
 }
 
-function buildTraceLines(stderr: string): Array<string> {
+function buildTraceLines(stderr: string, sensitiveEnvNames: Array<string>): Array<string> {
   return stderr
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map(sanitizeLogLine)
+    .map((line) => sanitizeLogLine(line, sensitiveEnvNames))
     .slice(0, TRACE_MAX_LINES);
 }
 
-function buildResultWithTrace(parsed: Record<string, unknown>, stderr: string, verbose: boolean): Record<string, unknown> {
+function buildResultWithTrace(
+  parsed: Record<string, unknown>,
+  stderr: string,
+  verbose: boolean,
+  sensitiveEnvNames: Array<string>,
+): Record<string, unknown> {
   if (!verbose) {
     return parsed;
   }
 
   return {
     ...parsed,
-    trace: buildTraceLines(stderr),
+    trace: buildTraceLines(stderr, sensitiveEnvNames),
     live_logs_supported: true,
   };
 }
 
-function toScriptExecutionError(stdout: string, stderr: string): ScriptRunnerError {
-  const trace = buildTraceLines(stderr);
+function toScriptExecutionError(stdout: string, stderr: string, sensitiveEnvNames: Array<string>): ScriptRunnerError {
+  const trace = buildTraceLines(stderr, sensitiveEnvNames);
 
   if (stdout.trim().length > 0) {
     try {
@@ -177,22 +177,26 @@ function toScriptExecutionError(stdout: string, stderr: string): ScriptRunnerErr
 
 export class ScriptRunnerService {
   private readonly scriptsRoot: string;
-  private readonly registry: ApprovedScriptRegistry;
+  private readonly registry: ScriptRegistryProvider;
   private readonly execRunner: ExecRunner;
   private readonly spawnRunner: SpawnRunner;
   private readonly jobs: Map<string, ScriptJobRecord>;
+  private readonly sensitiveEnvNames: Array<string>;
 
   constructor(params?: {
     scriptsRoot?: string;
-    registry?: ApprovedScriptRegistry;
+    registry?: ScriptRegistryProvider;
     execRunner?: ExecRunner;
     spawnRunner?: SpawnRunner;
+    sensitiveEnvNames?: Array<string>;
   }) {
-    this.scriptsRoot = params?.scriptsRoot ?? path.resolve(process.cwd(), "tools", "scripts");
-    this.registry = params?.registry ?? new ApprovedScriptRegistry();
+    const envConfig = getScriptRunnerEnvConfig();
+    this.scriptsRoot = params?.scriptsRoot ?? envConfig.scriptsRoot;
+    this.registry = params?.registry ?? new ConfiguredScriptRegistry(envConfig.approvedScripts);
     this.execRunner = params?.execRunner ?? defaultExecRunner;
     this.spawnRunner = params?.spawnRunner ?? defaultSpawnRunner;
     this.jobs = new Map();
+    this.sensitiveEnvNames = params?.sensitiveEnvNames ?? envConfig.sensitiveEnvNames;
   }
 
   private async prepareExecution(input: JarvisRunScriptInput): Promise<PreparedExecution> {
@@ -200,7 +204,7 @@ export class ScriptRunnerService {
       throw new ScriptRunnerError("CONFIRMATION_REQUIRED", "Execution requires confirmed=true");
     }
 
-    const script = this.registry.get(input.script_name);
+    const script = await this.registry.get(input.script_name);
     const scriptPath = path.join(this.scriptsRoot, script.file_name);
     await access(scriptPath);
 
@@ -236,7 +240,7 @@ export class ScriptRunnerService {
         ok: true,
         script_name: prepared.scriptName,
         phase: prepared.phase,
-        result: buildResultWithTrace(parsed, execution.stderr, prepared.verbose),
+        result: buildResultWithTrace(parsed, execution.stderr, prepared.verbose, this.sensitiveEnvNames),
       };
     } catch (error: unknown) {
       if (error instanceof ScriptRunnerError) {
@@ -245,7 +249,7 @@ export class ScriptRunnerService {
 
       const execError = error as ExecError;
       const execution = toExecResult(execError.stdout ?? "", execError.stderr ?? "");
-      throw toScriptExecutionError(execution.stdout, execution.stderr);
+      throw toScriptExecutionError(execution.stdout, execution.stderr, this.sensitiveEnvNames);
     }
   }
 
@@ -303,7 +307,7 @@ export class ScriptRunnerService {
         stderrBuffer = stderrBuffer.slice(newlineIndex + 1);
 
         if (rawLine.length > 0 && job.logs.length < TRACE_MAX_LINES) {
-          job.logs.push(sanitizeLogLine(rawLine));
+          job.logs.push(sanitizeLogLine(rawLine, this.sensitiveEnvNames));
         }
       }
     });
@@ -330,7 +334,7 @@ export class ScriptRunnerService {
 
       const tail = stderrBuffer.trim();
       if (tail.length > 0 && job.logs.length < TRACE_MAX_LINES) {
-        job.logs.push(sanitizeLogLine(tail));
+        job.logs.push(sanitizeLogLine(tail, this.sensitiveEnvNames));
       }
 
       if (code === 0) {
@@ -346,7 +350,7 @@ export class ScriptRunnerService {
         }
       }
 
-      const error = toScriptExecutionError(stdoutBuffer, job.logs.join("\n"));
+      const error = toScriptExecutionError(stdoutBuffer, job.logs.join("\n"), this.sensitiveEnvNames);
       job.status = "failed";
       job.error = {
         code: error.code,

@@ -1,23 +1,16 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { getServerEnvConfig } from "../config/env.js";
 import type { RegisterableModule } from "../registry/types.js";
 import { getRuntimeState } from "../server/runtime-state.js";
-
-const EXPECTED_ENV_VARS = [
-  "STARTER_TRANSPORT",
-  "PORT",
-  "CORS_ORIGIN",
-  "NPM_URL",
-  "NPM_IDENTITY",
-  "NPM_SECRET",
-] as const;
 
 function diagnosePayload(): Record<string, unknown> {
   const runtime = getRuntimeState();
   const uptimeSec = Math.floor((Date.now() - runtime.startedAt) / 1000);
+  const expectedEnvVars = getServerEnvConfig().diagnoseEnvVars;
 
   const env = Object.fromEntries(
-    EXPECTED_ENV_VARS.map((name) => [name, Boolean(process.env[name])])
+    expectedEnvVars.map((name) => [name, Boolean(process.env[name])])
   );
 
   const messages: Array<string> = [];

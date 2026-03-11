@@ -4,20 +4,16 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { RequestHandler } from "express";
 import cors from "cors";
-import { config } from "dotenv";
 import express, { type Express, type Request, type Response } from "express";
+import { loadServerConfig } from "../config/service.js";
+import { SERVER_NAME, SERVER_VERSION, type TransportMode } from "../config/env.js";
 import { autoRegisterModules } from "../registry/auto-loader.js";
 import { setRuntimeState } from "./runtime-state.js";
 import { MCP_SESSION_HEADER, MCP_SESSION_HEADER_LOWER } from "./session.js";
 
-type TransportMode = "stdio" | "http";
 type SessionContext = { server: McpServer; transport: StreamableHTTPServerTransport };
 type SessionContextMap = Map<string, SessionContext>;
 
-config();
-
-const SERVER_NAME = "mcp-server-starter";
-const SERVER_VERSION = "1.0.2";
 const MCP_PROTOCOL_HEADER = "MCP-Protocol-Version";
 
 export function createApp(corsOrigin: string): Express {
@@ -197,7 +193,8 @@ async function handleSessionDelete(req: Request, res: Response, sessions: Sessio
 }
 
 export async function boot(mode?: TransportMode): Promise<void> {
-  const transportMode = mode ?? (process.env.STARTER_TRANSPORT as TransportMode | undefined) ?? "stdio";
+  const runtimeConfig = await loadServerConfig();
+  const transportMode = mode ?? runtimeConfig.transportMode;
 
   const bootstrap = await createRegisteredServer();
   setRuntimeState({
@@ -216,7 +213,7 @@ export async function boot(mode?: TransportMode): Promise<void> {
   }
 
   const sessions: SessionContextMap = new Map();
-  const corsOrigin = process.env.CORS_ORIGIN ?? "*";
+  const corsOrigin = runtimeConfig.corsOrigin;
   const app = createApp(corsOrigin);
 
   app.use("/mcp", sessionMiddleware());
@@ -279,7 +276,7 @@ export async function boot(mode?: TransportMode): Promise<void> {
     }
   });
 
-  const port = Number(process.env.PORT ?? 3000);
+  const port = runtimeConfig.port;
   const httpServer = app.listen(port, () => {
     console.log(`[mcp/http] listening on http://localhost:${String(port)}/mcp`);
     console.log(`[mcp/http] cors origin: ${corsOrigin}`);

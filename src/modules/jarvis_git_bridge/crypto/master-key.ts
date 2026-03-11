@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { JarvisGitBridgeError } from "../services/errors.js";
+import { getGitBridgeEnvConfig } from "../../../config/env.js";
 
 const MASTER_KEY_BYTES = 32;
 
@@ -19,15 +20,14 @@ function toValidKey(raw: string): Buffer {
 }
 
 export async function loadMasterKeyFromEnv(): Promise<Buffer> {
-  const keyFile = process.env.MASTER_KEY_FILE?.trim()
-    || process.env.jarvis_tools_MASTER_KEY_FILE?.trim();
+  const { masterKey } = getGitBridgeEnvConfig();
+  const keyFile = masterKey.keyFile;
   if (typeof keyFile === "string" && keyFile.length > 0) {
     const fileContent = await readFile(keyFile, "utf-8");
     return toValidKey(fileContent);
   }
 
-  const inlineKey = process.env.MASTER_KEY?.trim()
-    || process.env.jarvis_tools_MASTER_KEY?.trim();
+  const inlineKey = masterKey.inlineKey;
   if (typeof inlineKey === "string" && inlineKey.length > 0) {
     return toValidKey(inlineKey);
   }

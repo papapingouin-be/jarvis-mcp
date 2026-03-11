@@ -1,26 +1,18 @@
 import type { ScriptDefinition, ScriptRegistry } from "../types/domain.js";
 import { ScriptRunnerError } from "./errors.js";
+import { loadConfiguredScriptRegistry } from "../../../config/service.js";
+import { getDefaultApprovedScripts } from "../../../config/env.js";
 
-const DEFAULT_REGISTRY: ScriptRegistry = {
-  "proxmox-CTDEV.sh": {
-    name: "proxmox-CTDEV.sh",
-    file_name: "proxmox-CTDEV.sh",
-    required_env: [
-      "PROXMOX_HOST",
-      "PROXMOX_WEB",
-      "PROXMOX_SSH_PORT",
-      "PROXMOX_USER",
-      "PROXMOX_PASSWORD",
-      "PROXMOX_API_TOKEN_ID",
-      "PROXMOX_API_TOKEN_SECRET",
-    ],
-  },
+export type ScriptRegistryProvider = {
+  isAllowed: (scriptName: string) => boolean | Promise<boolean>;
+  get: (scriptName: string) => ScriptDefinition | Promise<ScriptDefinition>;
+  listNames: () => Array<string> | Promise<Array<string>>;
 };
 
-export class ApprovedScriptRegistry {
+export class ApprovedScriptRegistry implements ScriptRegistryProvider {
   private readonly registry: ScriptRegistry;
 
-  constructor(registry: ScriptRegistry = DEFAULT_REGISTRY) {
+  constructor(registry: ScriptRegistry = getDefaultApprovedScripts()) {
     this.registry = registry;
   }
 
@@ -39,5 +31,40 @@ export class ApprovedScriptRegistry {
 
   listNames(): Array<string> {
     return Object.keys(this.registry).sort();
+  }
+}
+
+export class ConfiguredScriptRegistry implements ScriptRegistryProvider {
+  private readonly fallback: ApprovedScriptRegistry;
+  private registryPromise: Promise<ApprovedScriptRegistry> | null;
+
+  constructor(fallback: ScriptRegistry = getDefaultApprovedScripts()) {
+    this.fallback = new ApprovedScriptRegistry(fallback);
+    this.registryPromise = null;
+  }
+
+  private async loadRegistry(): Promise<ApprovedScriptRegistry> {
+    if (this.registryPromise === null) {
+      this.registryPromise = loadConfiguredScriptRegistry()
+        .then((registry) => new ApprovedScriptRegistry(registry))
+        .catch(() => this.fallback);
+    }
+
+    return this.registryPromise;
+  }
+
+  async isAllowed(scriptName: string): Promise<boolean> {
+    const registry = await this.loadRegistry();
+    return registry.isAllowed(scriptName);
+  }
+
+  async get(scriptName: string): Promise<ScriptDefinition> {
+    const registry = await this.loadRegistry();
+    return registry.get(scriptName);
+  }
+
+  async listNames(): Promise<Array<string>> {
+    const registry = await this.loadRegistry();
+    return registry.listNames();
   }
 }

@@ -1,4 +1,5 @@
 import { JarvisGitBridgeError } from "../services/errors.js";
+import { getGitBridgeEnvConfig } from "../../../config/env.js";
 
 export type QueryResultRow = Record<string, unknown>;
 
@@ -16,40 +17,10 @@ type PgModule = {
   Pool: new (config: { connectionString: string }) => PgPoolClient;
 };
 
-function buildDatabaseUrlFromJarvisTools(): string | null {
-  const hostPort = process.env.jarvis_tools_PG_URL?.trim();
-  const database = process.env.jarvis_tools_PG_DB?.trim();
-  const user = process.env.jarvis_tools_PG_USER?.trim();
-  const password = process.env.jarvis_tools_PG_PASSWORD?.trim();
-
-  if (!hostPort || !database || !user || !password) {
-    return null;
-  }
-
-  const encodedUser = encodeURIComponent(user);
-  const encodedPassword = encodeURIComponent(password);
-
-  if (hostPort.startsWith("postgres://") || hostPort.startsWith("postgresql://")) {
-    return `${hostPort.replace(/\/+$/g, "")}/${database}`;
-  }
-
-  return `postgresql://${encodedUser}:${encodedPassword}@${hostPort}/${database}`;
-}
-
 function resolveDatabaseConnectionString(): string {
-  const direct = process.env.DATABASE_URL?.trim();
-  if (direct) {
-    return direct;
-  }
-
-  const jarvisToolsDirect = process.env.jarvis_tools_DATABASE_URL?.trim();
-  if (jarvisToolsDirect) {
-    return jarvisToolsDirect;
-  }
-
-  const fromParts = buildDatabaseUrlFromJarvisTools();
-  if (fromParts) {
-    return fromParts;
+  const config = getGitBridgeEnvConfig();
+  if (config.database.connectionString !== undefined) {
+    return config.database.connectionString;
   }
 
   throw new JarvisGitBridgeError(
@@ -59,12 +30,10 @@ function resolveDatabaseConnectionString(): string {
 }
 
 async function loadPgModule(): Promise<PgModule> {
-  const moduleName = process.env.JARVIS_GIT_BRIDGE_PG_MODULE?.trim()
-    || process.env.jarvis_tools_GIT_BRIDGE_PG_MODULE?.trim()
-    || "pg";
+  const { pgModuleName } = getGitBridgeEnvConfig().database;
 
   try {
-    return await import(moduleName) as PgModule;
+    return await import(pgModuleName) as PgModule;
   } catch {
     throw new JarvisGitBridgeError(
       "PG_MODULE_MISSING",
