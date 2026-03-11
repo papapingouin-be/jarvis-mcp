@@ -1,7 +1,9 @@
 import assert from "node:assert";
+import { EventEmitter } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 import { ScriptRunnerError } from "../src/modules/script_runner/services/errors.ts";
 import { ApprovedScriptRegistry } from "../src/modules/script_runner/services/script-registry.ts";
@@ -37,8 +39,7 @@ describe("script runner service", () => {
 
     try {
       const fileName = "approved.sh";
-      const scriptPath = path.join(tempDir, fileName);
-      await writeFile(scriptPath, "#!/usr/bin/env bash\necho '{}'\n", "utf8");
+      await writeFile(path.join(tempDir, fileName), "#!/usr/bin/env bash\necho '{}'\n", "utf8");
 
       const registry = new ApprovedScriptRegistry({
         "approved.sh": {
@@ -82,7 +83,7 @@ describe("script runner service", () => {
       const trace = result.result.trace;
       assert(Array.isArray(trace));
       assert.deepStrictEqual(trace, ["step 1", "step 2"]);
-      assert.strictEqual(result.result.live_logs_supported, false);
+      assert.strictEqual(result.result.live_logs_supported, true);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -120,6 +121,77 @@ describe("script runner service", () => {
 
       assert.strictEqual(result.result.trace, undefined);
       assert.strictEqual(result.result.live_logs_supported, undefined);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("supports async job polling", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "script-runner-"));
+
+    try {
+      const fileName = "approved.sh";
+      await writeFile(path.join(tempDir, fileName), "#!/usr/bin/env bash\necho '{}'\n", "utf8");
+
+      const registry = new ApprovedScriptRegistry({
+        "approved.sh": {
+          name: "approved.sh",
+          file_name: fileName,
+          required_env: [],
+        },
+      });
+
+      const service = new ScriptRunnerService({
+        scriptsRoot: tempDir,
+        registry,
+        spawnRunner: () => {
+          const proc = new EventEmitter() as EventEmitter & {
+            stdout: PassThrough;
+            stderr: PassThrough;
+            kill: () => boolean;
+          };
+          proc.stdout = new PassThrough();
+          proc.stderr = new PassThrough();
+          proc.kill = () => true;
+
+          setTimeout(() => {
+            proc.stderr.write("collecting\n");
+            proc.stdout.write('{"summary":"ok","status":"done"}');
+            proc.stdout.end();
+            proc.stderr.end();
+            proc.emit("close", 0);
+          }, 10);
+
+          return proc as unknown as import("node:child_process").ChildProcess;
+        },
+      });
+
+      const started = await service.startAsyncJob({
+        script_name: "approved.sh",
+        phase: "collect",
+      });
+
+      assert.strictEqual(started.status, "running");
+
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      const poll = service.getAsyncJob({
+        job_id: started.job_id,
+        offset: 0,
+        limit: 50,
+      });
+
+      assert.strictEqual(poll.ok, true);
+      const job = poll.job as {
+        status?: string;
+        completed?: boolean;
+        logs?: Array<string>;
+        result?: Record<string, unknown> | null;
+      };
+      assert.strictEqual(job.status, "completed");
+      assert.strictEqual(job.completed, true);
+      assert.deepStrictEqual(job.logs, ["collecting"]);
+      assert.strictEqual((job.result ?? {}).summary, "ok");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

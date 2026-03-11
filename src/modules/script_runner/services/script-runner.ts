@@ -1,5 +1,6 @@
 import { access } from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
 import { ApprovedScriptRegistry } from "./script-registry.js";
@@ -9,7 +10,8 @@ import type { ScriptRunSuccess } from "../types/domain.js";
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_TIMEOUT_MS = 120_000;
-const TRACE_MAX_LINES = 200;
+const TRACE_MAX_LINES = 500;
+const JOB_TTL_MS = 60 * 60 * 1000;
 const SENSITIVE_ENV_NAMES = [
   "PROXMOX_PASSWORD",
   "PROXMOX_API_TOKEN_SECRET",
@@ -23,10 +25,37 @@ type ExecResult = {
 };
 
 type ExecRunner = (filePath: string, args: Array<string>, env: NodeJS.ProcessEnv) => Promise<ExecResult>;
+type SpawnRunner = (filePath: string, args: Array<string>, env: NodeJS.ProcessEnv) => ChildProcess;
 
 type ExecError = {
   stdout?: string | Buffer;
   stderr?: string | Buffer;
+};
+
+type PreparedExecution = {
+  scriptName: string;
+  scriptPath: string;
+  args: Array<string>;
+  phase: "collect" | "execute";
+  verbose: boolean;
+};
+
+type ScriptJobStatus = "running" | "completed" | "failed";
+
+type ScriptJobRecord = {
+  job_id: string;
+  script_name: string;
+  phase: "collect" | "execute";
+  status: ScriptJobStatus;
+  created_at: string;
+  started_at: string;
+  ended_at?: string;
+  logs: Array<string>;
+  result?: Record<string, unknown>;
+  error?: {
+    code: string;
+    message: string;
+  };
 };
 
 function toExecResult(stdout: string | Buffer, stderr: string | Buffer): ExecResult {
@@ -44,6 +73,13 @@ async function defaultExecRunner(filePath: string, args: Array<string>, env: Nod
   });
 
   return toExecResult(result.stdout, result.stderr);
+}
+
+function defaultSpawnRunner(filePath: string, args: Array<string>, env: NodeJS.ProcessEnv): ChildProcess {
+  return spawn(filePath, args, {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 
 function parseScriptJsonOutput(stdout: string): Record<string, unknown> {
@@ -104,22 +140,62 @@ function buildTraceLines(stderr: string): Array<string> {
     .slice(0, TRACE_MAX_LINES);
 }
 
+function buildResultWithTrace(parsed: Record<string, unknown>, stderr: string, verbose: boolean): Record<string, unknown> {
+  if (!verbose) {
+    return parsed;
+  }
+
+  return {
+    ...parsed,
+    trace: buildTraceLines(stderr),
+    live_logs_supported: true,
+  };
+}
+
+function toScriptExecutionError(stdout: string, stderr: string): ScriptRunnerError {
+  const trace = buildTraceLines(stderr);
+
+  if (stdout.trim().length > 0) {
+    try {
+      const parsed = parseScriptJsonOutput(stdout);
+      const summary = parsed.summary;
+      if (typeof summary === "string" && summary.trim().length > 0) {
+        return new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", summary.trim(), {
+          trace,
+          live_logs_supported: true,
+        });
+      }
+    } catch {
+    }
+  }
+
+  return new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", "Script execution failed", {
+    trace,
+    live_logs_supported: true,
+  });
+}
+
 export class ScriptRunnerService {
   private readonly scriptsRoot: string;
   private readonly registry: ApprovedScriptRegistry;
   private readonly execRunner: ExecRunner;
+  private readonly spawnRunner: SpawnRunner;
+  private readonly jobs: Map<string, ScriptJobRecord>;
 
   constructor(params?: {
     scriptsRoot?: string;
     registry?: ApprovedScriptRegistry;
     execRunner?: ExecRunner;
+    spawnRunner?: SpawnRunner;
   }) {
     this.scriptsRoot = params?.scriptsRoot ?? path.resolve(process.cwd(), "tools", "scripts");
     this.registry = params?.registry ?? new ApprovedScriptRegistry();
     this.execRunner = params?.execRunner ?? defaultExecRunner;
+    this.spawnRunner = params?.spawnRunner ?? defaultSpawnRunner;
+    this.jobs = new Map();
   }
 
-  async run(input: JarvisRunScriptInput): Promise<ScriptRunSuccess> {
+  private async prepareExecution(input: JarvisRunScriptInput): Promise<PreparedExecution> {
     if (input.phase === "execute" && input.confirmed !== true) {
       throw new ScriptRunnerError("CONFIRMATION_REQUIRED", "Execution requires confirmed=true");
     }
@@ -140,26 +216,27 @@ export class ScriptRunnerService {
       );
     }
 
-    const args = buildScriptArgs(input);
+    return {
+      scriptName: script.name,
+      scriptPath,
+      args: buildScriptArgs(input),
+      phase: input.phase,
+      verbose: input.verbose !== false,
+    };
+  }
+
+  async run(input: JarvisRunScriptInput): Promise<ScriptRunSuccess> {
+    const prepared = await this.prepareExecution(input);
 
     try {
-      const execution = await this.execRunner(scriptPath, args, process.env);
+      const execution = await this.execRunner(prepared.scriptPath, prepared.args, process.env);
       const parsed = parseScriptJsonOutput(execution.stdout);
-
-      const includeTrace = input.verbose !== false;
-      const result = includeTrace
-        ? {
-          ...parsed,
-          trace: buildTraceLines(execution.stderr),
-          live_logs_supported: false,
-        }
-        : parsed;
 
       return {
         ok: true,
-        script_name: script.name,
-        phase: input.phase,
-        result,
+        script_name: prepared.scriptName,
+        phase: prepared.phase,
+        result: buildResultWithTrace(parsed, execution.stderr, prepared.verbose),
       };
     } catch (error: unknown) {
       if (error instanceof ScriptRunnerError) {
@@ -168,27 +245,180 @@ export class ScriptRunnerService {
 
       const execError = error as ExecError;
       const execution = toExecResult(execError.stdout ?? "", execError.stderr ?? "");
-      const trace = buildTraceLines(execution.stderr);
-      const stdout = execution.stdout;
+      throw toScriptExecutionError(execution.stdout, execution.stderr);
+    }
+  }
 
-      if (stdout.trim().length > 0) {
+  async startAsyncJob(input: JarvisRunScriptInput): Promise<{ job_id: string; status: "running" }> {
+    const prepared = await this.prepareExecution(input);
+    this.cleanupExpiredJobs();
+
+    const jobId = randomUUID();
+    const now = new Date().toISOString();
+    const job: ScriptJobRecord = {
+      job_id: jobId,
+      script_name: prepared.scriptName,
+      phase: prepared.phase,
+      status: "running",
+      created_at: now,
+      started_at: now,
+      logs: [],
+    };
+    this.jobs.set(jobId, job);
+
+    let child: ChildProcess;
+    try {
+      child = this.spawnRunner(prepared.scriptPath, prepared.args, process.env);
+    } catch {
+      job.status = "failed";
+      job.ended_at = new Date().toISOString();
+      job.error = {
+        code: "SCRIPT_EXECUTION_FAILED",
+        message: "Script execution failed",
+      };
+
+      return {
+        job_id: jobId,
+        status: "running",
+      };
+    }
+
+    let stdoutBuffer = "";
+    let stderrBuffer = "";
+
+    child.stdout?.on("data", (chunk: Buffer | string) => {
+      stdoutBuffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    });
+
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      stderrBuffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+
+      while (true) {
+        const newlineIndex = stderrBuffer.indexOf("\n");
+        if (newlineIndex < 0) {
+          break;
+        }
+
+        const rawLine = stderrBuffer.slice(0, newlineIndex).trim();
+        stderrBuffer = stderrBuffer.slice(newlineIndex + 1);
+
+        if (rawLine.length > 0 && job.logs.length < TRACE_MAX_LINES) {
+          job.logs.push(sanitizeLogLine(rawLine));
+        }
+      }
+    });
+
+    child.on("error", () => {
+      if (job.status !== "running") {
+        return;
+      }
+
+      job.status = "failed";
+      job.ended_at = new Date().toISOString();
+      job.error = {
+        code: "SCRIPT_EXECUTION_FAILED",
+        message: "Script execution failed",
+      };
+    });
+
+    child.on("close", (code) => {
+      if (job.status !== "running") {
+        return;
+      }
+
+      const endedAt = new Date().toISOString();
+
+      const tail = stderrBuffer.trim();
+      if (tail.length > 0 && job.logs.length < TRACE_MAX_LINES) {
+        job.logs.push(sanitizeLogLine(tail));
+      }
+
+      if (code === 0) {
         try {
-          const parsed = parseScriptJsonOutput(stdout);
-          const summary = parsed.summary;
-          if (typeof summary === "string" && summary.trim().length > 0) {
-            throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", summary.trim(), {
-              trace,
-              live_logs_supported: false,
-            });
-          }
+          const parsed = parseScriptJsonOutput(stdoutBuffer);
+          job.status = "completed";
+          job.result = prepared.verbose
+            ? { ...parsed, live_logs_supported: true }
+            : parsed;
+          job.ended_at = endedAt;
+          return;
         } catch {
         }
       }
 
-      throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", "Script execution failed", {
-        trace,
-        live_logs_supported: false,
-      });
+      const error = toScriptExecutionError(stdoutBuffer, job.logs.join("\n"));
+      job.status = "failed";
+      job.error = {
+        code: error.code,
+        message: error.safeMessage,
+      };
+      job.ended_at = endedAt;
+    });
+
+    setTimeout(() => {
+      if (job.status === "running") {
+        child.kill("SIGTERM");
+        job.status = "failed";
+        job.ended_at = new Date().toISOString();
+        job.error = {
+          code: "SCRIPT_TIMEOUT",
+          message: "Script execution timed out",
+        };
+      }
+    }, SCRIPT_TIMEOUT_MS);
+
+    return {
+      job_id: jobId,
+      status: "running",
+    };
+  }
+
+  getAsyncJob(params: { job_id: string; offset?: number; limit?: number }): {
+    ok: true;
+    job: Record<string, unknown>;
+  } {
+    this.cleanupExpiredJobs();
+
+    const job = this.jobs.get(params.job_id);
+    if (job === undefined) {
+      throw new ScriptRunnerError("JOB_NOT_FOUND", "Script job not found");
+    }
+
+    const offset = Math.max(0, params.offset ?? 0);
+    const limit = Math.min(500, Math.max(1, params.limit ?? 100));
+    const logs = job.logs.slice(offset, offset + limit);
+
+    return {
+      ok: true,
+      job: {
+        job_id: job.job_id,
+        script_name: job.script_name,
+        phase: job.phase,
+        status: job.status,
+        created_at: job.created_at,
+        started_at: job.started_at,
+        ended_at: job.ended_at,
+        logs,
+        next_offset: offset + logs.length,
+        completed: job.status !== "running",
+        result: job.result ?? null,
+        error: job.error ?? null,
+      },
+    };
+  }
+
+  private cleanupExpiredJobs(): void {
+    const nowMs = Date.now();
+
+    for (const [jobId, job] of this.jobs.entries()) {
+      if (job.status === "running") {
+        continue;
+      }
+
+      const endedAtMs = Date.parse(job.ended_at ?? job.created_at);
+      if (!Number.isNaN(endedAtMs) && nowMs - endedAtMs > JOB_TTL_MS) {
+        this.jobs.delete(jobId);
+      }
     }
   }
 }
