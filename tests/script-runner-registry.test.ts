@@ -8,6 +8,15 @@ describe("approved script registry", () => {
 
     assert.strictEqual(registry.isAllowed("proxmox-CTDEV.sh"), true);
     assert(registry.listNames().includes("proxmox-CTDEV.sh"));
+    assert.strictEqual(registry.get("proxmox-CTDEV.sh").file_name, "proxmox-CTDEV.sh");
+  });
+
+  it("returns script descriptions", () => {
+    const registry = new ApprovedScriptRegistry();
+
+    const description = registry.get("proxmox-CTDEV.sh").description;
+    assert.strictEqual(typeof description, "string");
+    assert(description?.includes("Proxmox"));
   });
 
   it("rejects unknown scripts", () => {

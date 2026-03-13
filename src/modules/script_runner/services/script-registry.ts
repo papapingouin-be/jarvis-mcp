@@ -7,6 +7,7 @@ export type ScriptRegistryProvider = {
   isAllowed: (scriptName: string) => boolean | Promise<boolean>;
   get: (scriptName: string) => ScriptDefinition | Promise<ScriptDefinition>;
   listNames: () => Array<string> | Promise<Array<string>>;
+  list: () => Array<ScriptDefinition> | Promise<Array<ScriptDefinition>>;
 };
 
 export class ApprovedScriptRegistry implements ScriptRegistryProvider {
@@ -31,6 +32,10 @@ export class ApprovedScriptRegistry implements ScriptRegistryProvider {
 
   listNames(): Array<string> {
     return Object.keys(this.registry).sort();
+  }
+
+  list(): Array<ScriptDefinition> {
+    return this.listNames().map((name) => this.registry[name]).filter((entry): entry is ScriptDefinition => entry !== undefined);
   }
 }
 
@@ -66,5 +71,10 @@ export class ConfiguredScriptRegistry implements ScriptRegistryProvider {
   async listNames(): Promise<Array<string>> {
     const registry = await this.loadRegistry();
     return registry.listNames();
+  }
+
+  async list(): Promise<Array<ScriptDefinition>> {
+    const registry = await this.loadRegistry();
+    return registry.list();
   }
 }

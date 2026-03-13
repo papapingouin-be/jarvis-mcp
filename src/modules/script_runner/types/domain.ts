@@ -13,6 +13,7 @@ export type ScriptDefinition = {
   name: string;
   file_name: string;
   required_env: Array<string>;
+  description?: string;
 };
 
 export type ScriptRegistry = Record<string, ScriptDefinition>;

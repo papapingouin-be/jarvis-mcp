@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -84,6 +84,74 @@ describe("script runner service", () => {
       assert(Array.isArray(trace));
       assert.deepStrictEqual(trace, ["step 1", "step 2"]);
       assert.strictEqual(result.result.live_logs_supported, true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("supports nested script paths under scripts root", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "script-runner-"));
+
+    try {
+      await mkdir(path.join(tempDir, "import"), { recursive: true });
+      await writeFile(path.join(tempDir, "import", "approved.sh"), "#!/usr/bin/env bash\necho '{}'\n", "utf8");
+
+      let capturedPath = "";
+      const registry = new ApprovedScriptRegistry({
+        "approved-import.sh": {
+          name: "approved-import.sh",
+          file_name: "import/approved.sh",
+          required_env: [],
+        },
+      });
+
+      const service = new ScriptRunnerService({
+        scriptsRoot: tempDir,
+        registry,
+        execRunner: async (filePath) => {
+          capturedPath = filePath;
+          return {
+            stdout: "{\"summary\":\"ok\"}",
+            stderr: "",
+          };
+        },
+      });
+
+      await service.run({
+        script_name: "approved-import.sh",
+        phase: "collect",
+      });
+
+      assert.strictEqual(capturedPath, path.join(tempDir, "import", "approved.sh"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses parent traversal in script paths", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "script-runner-"));
+
+    try {
+      const registry = new ApprovedScriptRegistry({
+        "bad.sh": {
+          name: "bad.sh",
+          file_name: "../bad.sh",
+          required_env: [],
+        },
+      });
+
+      const service = new ScriptRunnerService({
+        scriptsRoot: tempDir,
+        registry,
+      });
+
+      await assert.rejects(
+        async () => service.run({
+          script_name: "bad.sh",
+          phase: "collect",
+        }),
+        (error: unknown) => error instanceof ScriptRunnerError && error.code === "SCRIPT_PATH_INVALID"
+      );
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

@@ -10,6 +10,7 @@ type ScriptRegistryRow = {
   script_name: string;
   file_name: string;
   required_env_json: unknown;
+  description: unknown;
 };
 
 function parseStringArray(input: unknown): Array<string> {
@@ -31,11 +32,21 @@ function parseStringArray(input: unknown): Array<string> {
   return [];
 }
 
+function toOptionalString(input: unknown): string | undefined {
+  if (typeof input !== "string") {
+    return undefined;
+  }
+
+  const trimmed = input.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function toScriptDefinition(row: ScriptRegistryRow): ScriptDefinition {
   return {
     name: row.script_name,
     file_name: row.file_name,
     required_env: parseStringArray(row.required_env_json),
+    description: toOptionalString(row.description),
   };
 }
 
@@ -53,10 +64,13 @@ export async function runConfigStoreMigrations(db: DatabaseClient): Promise<void
       script_name VARCHAR(128) PRIMARY KEY,
       file_name VARCHAR(255) NOT NULL,
       required_env_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+      description TEXT NULL,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  await db.query(`ALTER TABLE jarvis_script_registry ADD COLUMN IF NOT EXISTS description TEXT NULL`);
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_jarvis_script_registry_active
@@ -113,7 +127,7 @@ export class ScriptRegistryRepository {
   async listActive(): Promise<ScriptRegistry> {
     const rows = await this.db.query<ScriptRegistryRow>(
       `
-      SELECT script_name, file_name, required_env_json
+      SELECT script_name, file_name, required_env_json, description
       FROM jarvis_script_registry
       WHERE is_active = TRUE
       ORDER BY script_name ASC
@@ -141,16 +155,17 @@ export class ScriptRegistryRepository {
     for (const definition of Object.values(defaults)) {
       await this.db.query(
         `
-        INSERT INTO jarvis_script_registry (script_name, file_name, required_env_json, is_active, updated_at)
-        VALUES ($1, $2, $3::jsonb, TRUE, NOW())
+        INSERT INTO jarvis_script_registry (script_name, file_name, required_env_json, description, is_active, updated_at)
+        VALUES ($1, $2, $3::jsonb, $4, TRUE, NOW())
         ON CONFLICT (script_name)
         DO UPDATE SET
           file_name = EXCLUDED.file_name,
           required_env_json = EXCLUDED.required_env_json,
+          description = EXCLUDED.description,
           is_active = TRUE,
           updated_at = NOW()
         `,
-        [definition.name, definition.file_name, JSON.stringify(definition.required_env)]
+        [definition.name, definition.file_name, JSON.stringify(definition.required_env), definition.description ?? null]
       );
     }
   }

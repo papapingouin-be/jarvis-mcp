@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { ConfiguredScriptRegistry, type ScriptRegistryProvider } from "./script-registry.js";
 import { ScriptRunnerError } from "./errors.js";
 import type { JarvisRunScriptInput } from "../types/schemas.js";
-import type { ScriptRunSuccess } from "../types/domain.js";
+import type { ScriptDefinition, ScriptRunSuccess } from "../types/domain.js";
 import { getScriptRunnerEnvConfig } from "../../../config/env.js";
 
 const execFileAsync = promisify(execFile);
@@ -21,6 +21,7 @@ type ExecResult = {
 
 type ExecRunner = (filePath: string, args: Array<string>, env: NodeJS.ProcessEnv) => Promise<ExecResult>;
 type SpawnRunner = (filePath: string, args: Array<string>, env: NodeJS.ProcessEnv) => ChildProcess;
+type ScriptPhase = JarvisRunScriptInput["phase"];
 
 type ExecError = {
   stdout?: string | Buffer;
@@ -28,10 +29,10 @@ type ExecError = {
 };
 
 type PreparedExecution = {
-  scriptName: string;
+  script: ScriptDefinition;
   scriptPath: string;
   args: Array<string>;
-  phase: "collect" | "execute";
+  phase: ScriptPhase;
   verbose: boolean;
 };
 
@@ -40,7 +41,7 @@ type ScriptJobStatus = "running" | "completed" | "failed";
 type ScriptJobRecord = {
   job_id: string;
   script_name: string;
-  phase: "collect" | "execute";
+  phase: ScriptPhase;
   status: ScriptJobStatus;
   created_at: string;
   started_at: string;
@@ -175,6 +176,41 @@ function toScriptExecutionError(stdout: string, stderr: string, sensitiveEnvName
   });
 }
 
+function resolveScriptPath(scriptsRoot: string, fileName: string): string {
+  const trimmed = fileName.trim();
+  if (trimmed.length === 0) {
+    throw new ScriptRunnerError("SCRIPT_PATH_INVALID", "Script file path is empty");
+  }
+
+  if (path.isAbsolute(trimmed)) {
+    throw new ScriptRunnerError("SCRIPT_PATH_INVALID", "Absolute script paths are not allowed");
+  }
+
+  const normalizedRelative = path.normalize(trimmed).replace(/[\\/]+/g, path.sep);
+  if (normalizedRelative.startsWith(`..${path.sep}`) || normalizedRelative === "..") {
+    throw new ScriptRunnerError("SCRIPT_PATH_INVALID", "Parent directory traversal is not allowed");
+  }
+
+  const absoluteRoot = path.resolve(scriptsRoot);
+  const resolvedPath = path.resolve(absoluteRoot, normalizedRelative);
+  const relativeBack = path.relative(absoluteRoot, resolvedPath);
+
+  if (relativeBack.startsWith("..") || path.isAbsolute(relativeBack)) {
+    throw new ScriptRunnerError("SCRIPT_PATH_INVALID", "Script path escapes the scripts root");
+  }
+
+  return resolvedPath;
+}
+
+function toScriptSummary(script: ScriptDefinition): Record<string, unknown> {
+  return {
+    name: script.name,
+    file_name: script.file_name,
+    description: script.description ?? null,
+    required_env: script.required_env,
+  };
+}
+
 export class ScriptRunnerService {
   private readonly scriptsRoot: string;
   private readonly registry: ScriptRegistryProvider;
@@ -199,13 +235,29 @@ export class ScriptRunnerService {
     this.sensitiveEnvNames = params?.sensitiveEnvNames ?? envConfig.sensitiveEnvNames;
   }
 
+  async listScripts(): Promise<{ ok: true; scripts: Array<Record<string, unknown>> }> {
+    const scripts = await this.registry.list();
+    return {
+      ok: true,
+      scripts: scripts.map(toScriptSummary),
+    };
+  }
+
+  async describeScript(scriptName: string): Promise<{ ok: true; script: Record<string, unknown> }> {
+    const script = await this.registry.get(scriptName);
+    return {
+      ok: true,
+      script: toScriptSummary(script),
+    };
+  }
+
   private async prepareExecution(input: JarvisRunScriptInput): Promise<PreparedExecution> {
     if (input.phase === "execute" && input.confirmed !== true) {
       throw new ScriptRunnerError("CONFIRMATION_REQUIRED", "Execution requires confirmed=true");
     }
 
     const script = await this.registry.get(input.script_name);
-    const scriptPath = path.join(this.scriptsRoot, script.file_name);
+    const scriptPath = resolveScriptPath(this.scriptsRoot, script.file_name);
     await access(scriptPath);
 
     const missingEnv = script.required_env.filter((name) => {
@@ -221,7 +273,7 @@ export class ScriptRunnerService {
     }
 
     return {
-      scriptName: script.name,
+      script,
       scriptPath,
       args: buildScriptArgs(input),
       phase: input.phase,
@@ -238,7 +290,7 @@ export class ScriptRunnerService {
 
       return {
         ok: true,
-        script_name: prepared.scriptName,
+        script_name: prepared.script.name,
         phase: prepared.phase,
         result: buildResultWithTrace(parsed, execution.stderr, prepared.verbose, this.sensitiveEnvNames),
       };
@@ -261,7 +313,7 @@ export class ScriptRunnerService {
     const now = new Date().toISOString();
     const job: ScriptJobRecord = {
       job_id: jobId,
-      script_name: prepared.scriptName,
+      script_name: prepared.script.name,
       phase: prepared.phase,
       status: "running",
       created_at: now,

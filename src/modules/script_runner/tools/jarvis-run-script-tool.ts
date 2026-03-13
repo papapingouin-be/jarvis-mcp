@@ -5,7 +5,7 @@ import { asScriptRunnerError } from "../services/errors.js";
 import { scriptParamValueSchema } from "../types/schemas.js";
 
 const runInputSchema = {
-  script_name: z.string().min(1).max(128),
+  script_name: z.string().min(1).max(255),
   phase: z.enum(["collect", "execute"]),
   confirmed: z.boolean().optional(),
   verbose: z.boolean().optional().default(true),
@@ -17,6 +17,10 @@ const pollInputSchema = {
   job_id: z.string().uuid(),
   offset: z.number().int().min(0).optional().default(0),
   limit: z.number().int().min(1).max(500).optional().default(100),
+};
+
+const describeInputSchema = {
+  script_name: z.string().min(1).max(255),
 };
 
 const service = new ScriptRunnerService();
@@ -89,6 +93,48 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
             {
               type: "text",
               text: JSON.stringify(result),
+            },
+          ],
+        };
+      } catch (error: unknown) {
+        return toErrorResponse(error);
+      }
+    }
+  );
+
+  server.tool(
+    "jarvis_list_scripts",
+    "List approved scripts available to jarvis_run_script",
+    {},
+    async () => {
+      try {
+        const payload = await service.listScripts();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(payload),
+            },
+          ],
+        };
+      } catch (error: unknown) {
+        return toErrorResponse(error);
+      }
+    }
+  );
+
+  server.tool(
+    "jarvis_describe_script",
+    "Describe one approved script, its required env vars and its purpose",
+    describeInputSchema,
+    async (args) => {
+      try {
+        const payload = await service.describeScript(args.script_name);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(payload),
             },
           ],
         };

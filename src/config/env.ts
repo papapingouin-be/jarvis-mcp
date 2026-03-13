@@ -10,6 +10,7 @@ type ScriptRegistryInput = Record<string, {
   name?: string;
   file_name?: string;
   required_env?: Array<string>;
+  description?: string;
 }>;
 
 export const SERVER_NAME = "mcp-server-starter";
@@ -28,6 +29,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
       "PROXMOX_API_TOKEN_ID",
       "PROXMOX_API_TOKEN_SECRET",
     ],
+    description: "Collecte les templates/CT Proxmox puis cree et demarre un conteneur CT de developpement.",
   },
 };
 
@@ -75,6 +77,9 @@ function toScriptDefinition(name: string, input: ScriptDefinition | ScriptRegist
     name: input.name ?? name,
     file_name: input.file_name ?? name,
     required_env: Array.isArray(input.required_env) ? [...input.required_env] : [],
+    description: typeof input.description === "string" && input.description.trim().length > 0
+      ? input.description.trim()
+      : undefined,
   };
 }
 
