@@ -14,7 +14,7 @@ type ScriptRegistryInput = Record<string, {
 }>;
 
 export const SERVER_NAME = "mcp-server-starter";
-export const SERVER_VERSION = "1.0.2";
+export const SERVER_VERSION = "1.0.3";
 
 const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "proxmox-CTDEV.sh": {
