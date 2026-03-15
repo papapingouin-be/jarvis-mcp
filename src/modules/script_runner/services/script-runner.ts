@@ -3,6 +3,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
+import { loadScriptEnvValues } from "../../../config/service.js";
 import { ConfiguredScriptRegistry, type ScriptRegistryProvider } from "./script-registry.js";
 import { ScriptRunnerError } from "./errors.js";
 import type { JarvisRunScriptInput } from "../types/schemas.js";
@@ -21,6 +22,7 @@ type ExecResult = {
 
 type ExecRunner = (filePath: string, args: Array<string>, env: NodeJS.ProcessEnv) => Promise<ExecResult>;
 type SpawnRunner = (filePath: string, args: Array<string>, env: NodeJS.ProcessEnv) => ChildProcess;
+type ScriptEnvResolver = (scriptName: string) => Promise<Record<string, string>>;
 type ScriptPhase = JarvisRunScriptInput["phase"];
 
 type ExecError = {
@@ -34,6 +36,7 @@ type PreparedExecution = {
   args: Array<string>;
   phase: ScriptPhase;
   verbose: boolean;
+  env: NodeJS.ProcessEnv;
 };
 
 type ScriptJobStatus = "running" | "completed" | "failed";
@@ -113,11 +116,15 @@ function buildScriptArgs(input: JarvisRunScriptInput): Array<string> {
   return args;
 }
 
-function sanitizeLogLine(line: string, sensitiveEnvNames: Array<string>): string {
+function sanitizeLogLine(
+  line: string,
+  sensitiveEnvNames: Array<string>,
+  env: NodeJS.ProcessEnv
+): string {
   let result = line;
 
   for (const envName of sensitiveEnvNames) {
-    const rawValue = process.env[envName]?.trim();
+    const rawValue = env[envName]?.trim();
     if (typeof rawValue === "string" && rawValue.length >= 3) {
       result = result.split(rawValue).join("***");
     }
@@ -127,12 +134,16 @@ function sanitizeLogLine(line: string, sensitiveEnvNames: Array<string>): string
   return result;
 }
 
-function buildTraceLines(stderr: string, sensitiveEnvNames: Array<string>): Array<string> {
+function buildTraceLines(
+  stderr: string,
+  sensitiveEnvNames: Array<string>,
+  env: NodeJS.ProcessEnv
+): Array<string> {
   return stderr
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map((line) => sanitizeLogLine(line, sensitiveEnvNames))
+    .map((line) => sanitizeLogLine(line, sensitiveEnvNames, env))
     .slice(0, TRACE_MAX_LINES);
 }
 
@@ -141,6 +152,7 @@ function buildResultWithTrace(
   stderr: string,
   verbose: boolean,
   sensitiveEnvNames: Array<string>,
+  env: NodeJS.ProcessEnv,
 ): Record<string, unknown> {
   if (!verbose) {
     return parsed;
@@ -148,13 +160,18 @@ function buildResultWithTrace(
 
   return {
     ...parsed,
-    trace: buildTraceLines(stderr, sensitiveEnvNames),
+    trace: buildTraceLines(stderr, sensitiveEnvNames, env),
     live_logs_supported: true,
   };
 }
 
-function toScriptExecutionError(stdout: string, stderr: string, sensitiveEnvNames: Array<string>): ScriptRunnerError {
-  const trace = buildTraceLines(stderr, sensitiveEnvNames);
+function toScriptExecutionError(
+  stdout: string,
+  stderr: string,
+  sensitiveEnvNames: Array<string>,
+  env: NodeJS.ProcessEnv,
+): ScriptRunnerError {
+  const trace = buildTraceLines(stderr, sensitiveEnvNames, env);
 
   if (stdout.trim().length > 0) {
     try {
@@ -218,6 +235,7 @@ export class ScriptRunnerService {
   private readonly spawnRunner: SpawnRunner;
   private readonly jobs: Map<string, ScriptJobRecord>;
   private readonly sensitiveEnvNames: Array<string>;
+  private readonly scriptEnvResolver: ScriptEnvResolver;
 
   constructor(params?: {
     scriptsRoot?: string;
@@ -225,6 +243,7 @@ export class ScriptRunnerService {
     execRunner?: ExecRunner;
     spawnRunner?: SpawnRunner;
     sensitiveEnvNames?: Array<string>;
+    scriptEnvResolver?: ScriptEnvResolver;
   }) {
     const envConfig = getScriptRunnerEnvConfig();
     this.scriptsRoot = params?.scriptsRoot ?? envConfig.scriptsRoot;
@@ -233,6 +252,7 @@ export class ScriptRunnerService {
     this.spawnRunner = params?.spawnRunner ?? defaultSpawnRunner;
     this.jobs = new Map();
     this.sensitiveEnvNames = params?.sensitiveEnvNames ?? envConfig.sensitiveEnvNames;
+    this.scriptEnvResolver = params?.scriptEnvResolver ?? loadScriptEnvValues;
   }
 
   async listScripts(): Promise<{ ok: true; scripts: Array<Record<string, unknown>> }> {
@@ -251,6 +271,14 @@ export class ScriptRunnerService {
     };
   }
 
+  private async buildExecutionEnv(script: ScriptDefinition): Promise<NodeJS.ProcessEnv> {
+    const storedEnv = await this.scriptEnvResolver(script.name);
+    return {
+      ...process.env,
+      ...storedEnv,
+    };
+  }
+
   private async prepareExecution(input: JarvisRunScriptInput): Promise<PreparedExecution> {
     if (input.phase === "execute" && input.confirmed !== true) {
       throw new ScriptRunnerError("CONFIRMATION_REQUIRED", "Execution requires confirmed=true");
@@ -260,8 +288,9 @@ export class ScriptRunnerService {
     const scriptPath = resolveScriptPath(this.scriptsRoot, script.file_name);
     await access(scriptPath);
 
+    const executionEnv = await this.buildExecutionEnv(script);
     const missingEnv = script.required_env.filter((name) => {
-      const value = process.env[name]?.trim();
+      const value = executionEnv[name]?.trim();
       return typeof value !== "string" || value.length === 0;
     });
 
@@ -278,6 +307,7 @@ export class ScriptRunnerService {
       args: buildScriptArgs(input),
       phase: input.phase,
       verbose: input.verbose !== false,
+      env: executionEnv,
     };
   }
 
@@ -285,14 +315,14 @@ export class ScriptRunnerService {
     const prepared = await this.prepareExecution(input);
 
     try {
-      const execution = await this.execRunner(prepared.scriptPath, prepared.args, process.env);
+      const execution = await this.execRunner(prepared.scriptPath, prepared.args, prepared.env);
       const parsed = parseScriptJsonOutput(execution.stdout);
 
       return {
         ok: true,
         script_name: prepared.script.name,
         phase: prepared.phase,
-        result: buildResultWithTrace(parsed, execution.stderr, prepared.verbose, this.sensitiveEnvNames),
+        result: buildResultWithTrace(parsed, execution.stderr, prepared.verbose, this.sensitiveEnvNames, prepared.env),
       };
     } catch (error: unknown) {
       if (error instanceof ScriptRunnerError) {
@@ -301,7 +331,7 @@ export class ScriptRunnerService {
 
       const execError = error as ExecError;
       const execution = toExecResult(execError.stdout ?? "", execError.stderr ?? "");
-      throw toScriptExecutionError(execution.stdout, execution.stderr, this.sensitiveEnvNames);
+      throw toScriptExecutionError(execution.stdout, execution.stderr, this.sensitiveEnvNames, prepared.env);
     }
   }
 
@@ -324,7 +354,7 @@ export class ScriptRunnerService {
 
     let child: ChildProcess;
     try {
-      child = this.spawnRunner(prepared.scriptPath, prepared.args, process.env);
+      child = this.spawnRunner(prepared.scriptPath, prepared.args, prepared.env);
     } catch {
       job.status = "failed";
       job.ended_at = new Date().toISOString();
@@ -359,7 +389,7 @@ export class ScriptRunnerService {
         stderrBuffer = stderrBuffer.slice(newlineIndex + 1);
 
         if (rawLine.length > 0 && job.logs.length < TRACE_MAX_LINES) {
-          job.logs.push(sanitizeLogLine(rawLine, this.sensitiveEnvNames));
+          job.logs.push(sanitizeLogLine(rawLine, this.sensitiveEnvNames, prepared.env));
         }
       }
     });
@@ -386,7 +416,7 @@ export class ScriptRunnerService {
 
       const tail = stderrBuffer.trim();
       if (tail.length > 0 && job.logs.length < TRACE_MAX_LINES) {
-        job.logs.push(sanitizeLogLine(tail, this.sensitiveEnvNames));
+        job.logs.push(sanitizeLogLine(tail, this.sensitiveEnvNames, prepared.env));
       }
 
       if (code === 0) {
@@ -402,7 +432,7 @@ export class ScriptRunnerService {
         }
       }
 
-      const error = toScriptExecutionError(stdoutBuffer, job.logs.join("\n"), this.sensitiveEnvNames);
+      const error = toScriptExecutionError(stdoutBuffer, job.logs.join("\n"), this.sensitiveEnvNames, prepared.env);
       job.status = "failed";
       job.error = {
         code: error.code,

@@ -264,4 +264,84 @@ describe("script runner service", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("loads required env values from the configured resolver", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "script-runner-"));
+
+    try {
+      const fileName = "approved.sh";
+      await writeFile(path.join(tempDir, fileName), "#!/usr/bin/env bash\necho '{}'\n", "utf8");
+
+      const registry = new ApprovedScriptRegistry({
+        "approved.sh": {
+          name: "approved.sh",
+          file_name: fileName,
+          required_env: ["PROXMOX_PASSWORD"],
+        },
+      });
+
+      let capturedEnv: NodeJS.ProcessEnv | undefined;
+      const service = new ScriptRunnerService({
+        scriptsRoot: tempDir,
+        registry,
+        scriptEnvResolver: async () => ({
+          PROXMOX_PASSWORD: "db-secret-value",
+        }),
+        execRunner: async (_filePath, _args, env) => {
+          capturedEnv = env;
+          return {
+            stdout: "{\"summary\":\"ok\"}",
+            stderr: "password=db-secret-value",
+          };
+        },
+      });
+
+      const result = await service.run({
+        script_name: "approved.sh",
+        phase: "collect",
+      });
+
+      assert.strictEqual(capturedEnv?.PROXMOX_PASSWORD, "db-secret-value");
+      assert.deepStrictEqual(result.result.trace, ["password=***"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when a required env value is missing from env and DB resolver", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "script-runner-"));
+
+    try {
+      const fileName = "approved.sh";
+      await writeFile(path.join(tempDir, fileName), "#!/usr/bin/env bash\necho '{}'\n", "utf8");
+
+      const registry = new ApprovedScriptRegistry({
+        "approved.sh": {
+          name: "approved.sh",
+          file_name: fileName,
+          required_env: ["DB_ONLY_REQUIRED_VALUE"],
+        },
+      });
+
+      const service = new ScriptRunnerService({
+        scriptsRoot: tempDir,
+        registry,
+        scriptEnvResolver: async () => ({}),
+      });
+
+      await assert.rejects(
+        async () => service.run({
+          script_name: "approved.sh",
+          phase: "collect",
+        }),
+        (error: unknown) => {
+          return error instanceof ScriptRunnerError
+            && error.code === "MISSING_ENV"
+            && error.safeMessage.includes("DB_ONLY_REQUIRED_VALUE");
+        }
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

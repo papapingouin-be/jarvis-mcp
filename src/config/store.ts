@@ -13,6 +13,12 @@ type ScriptRegistryRow = {
   description: unknown;
 };
 
+type ScriptEnvValueRow = {
+  script_name: string;
+  env_name: string;
+  env_value: unknown;
+};
+
 function parseStringArray(input: unknown): Array<string> {
   if (Array.isArray(input)) {
     return input
@@ -70,11 +76,26 @@ export async function runConfigStoreMigrations(db: DatabaseClient): Promise<void
     )
   `);
 
-  await db.query(`ALTER TABLE jarvis_script_registry ADD COLUMN IF NOT EXISTS description TEXT NULL`);
+  await db.query("ALTER TABLE jarvis_script_registry ADD COLUMN IF NOT EXISTS description TEXT NULL");
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS jarvis_script_env_values (
+      script_name VARCHAR(128) NOT NULL,
+      env_name VARCHAR(255) NOT NULL,
+      env_value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (script_name, env_name)
+    )
+  `);
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_jarvis_script_registry_active
     ON jarvis_script_registry(is_active, script_name)
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_jarvis_script_env_values_script
+    ON jarvis_script_env_values(script_name, env_name)
   `);
 }
 
@@ -166,6 +187,52 @@ export class ScriptRegistryRepository {
           updated_at = NOW()
         `,
         [definition.name, definition.file_name, JSON.stringify(definition.required_env), definition.description ?? null]
+      );
+    }
+  }
+}
+
+export class ScriptEnvRepository {
+  private readonly db: DatabaseClient;
+
+  constructor(db: DatabaseClient) {
+    this.db = db;
+  }
+
+  async listByScript(scriptName: string): Promise<Record<string, string>> {
+    const rows = await this.db.query<ScriptEnvValueRow>(
+      `
+      SELECT script_name, env_name, env_value
+      FROM jarvis_script_env_values
+      WHERE script_name = $1
+      ORDER BY env_name ASC
+      `,
+      [scriptName]
+    );
+
+    return Object.fromEntries(
+      rows
+        .map((row) => {
+          const envName = toOptionalString(row.env_name);
+          const envValue = toOptionalString(row.env_value);
+          return envName === undefined || envValue === undefined ? null : [envName, envValue];
+        })
+        .filter((entry): entry is [string, string] => entry !== null)
+    );
+  }
+
+  async upsertMany(scriptName: string, values: Record<string, string>): Promise<void> {
+    for (const [envName, envValue] of Object.entries(values)) {
+      await this.db.query(
+        `
+        INSERT INTO jarvis_script_env_values (script_name, env_name, env_value, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (script_name, env_name)
+        DO UPDATE SET
+          env_value = EXCLUDED.env_value,
+          updated_at = NOW()
+        `,
+        [scriptName, envName, envValue]
       );
     }
   }

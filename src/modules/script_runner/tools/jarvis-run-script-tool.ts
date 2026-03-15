@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { describeScriptEnv, saveScriptEnvValues } from "../../../config/service.js";
 import { ScriptRunnerService } from "../services/script-runner.js";
 import { asScriptRunnerError } from "../services/errors.js";
 import { scriptParamValueSchema } from "../types/schemas.js";
@@ -21,6 +22,11 @@ const pollInputSchema = {
 
 const describeInputSchema = {
   script_name: z.string().min(1).max(255),
+};
+
+const saveScriptConfigInputSchema = {
+  script_name: z.string().min(1).max(255),
+  values: z.record(z.string(), z.string().min(1)),
 };
 
 const service = new ScriptRunnerService();
@@ -130,6 +136,48 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
     async (args) => {
       try {
         const payload = await service.describeScript(args.script_name);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(payload),
+            },
+          ],
+        };
+      } catch (error: unknown) {
+        return toErrorResponse(error);
+      }
+    }
+  );
+
+  server.tool(
+    "jarvis_get_script_config",
+    "List the DB-backed configuration values required by an approved script",
+    describeInputSchema,
+    async (args) => {
+      try {
+        const payload = await describeScriptEnv(args.script_name);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(payload),
+            },
+          ],
+        };
+      } catch (error: unknown) {
+        return toErrorResponse(error);
+      }
+    }
+  );
+
+  server.tool(
+    "jarvis_save_script_config",
+    "Save DB-backed configuration values for an approved script",
+    saveScriptConfigInputSchema,
+    async (args) => {
+      try {
+        const payload = await saveScriptEnvValues(args.script_name, args.values);
         return {
           content: [
             {
