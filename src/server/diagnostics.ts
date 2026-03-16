@@ -50,12 +50,6 @@ type DiagnosticSummary = {
 };
 
 type ToolHandler = (...args: Array<any>) => unknown;
-type ToolRegistration = (
-  name: string,
-  description: string,
-  schema: unknown,
-  handler: ToolHandler
-) => unknown;
 
 const requestContextStorage = new AsyncLocalStorage<RequestContext>();
 const recentEvents: Array<DiagnosticEvent> = [];
@@ -324,41 +318,45 @@ function ensureRequestContext(verboseFallback: boolean, work: () => Promise<unkn
 }
 
 export function instrumentServerTools(server: McpServer): void {
-  const instrumentedServer = server as McpServer & {
-    tool: ToolRegistration;
-    [toolInstrumentationMarker]?: boolean;
-  };
+  const instrumentedServer = server as McpServer & Record<PropertyKey, unknown>;
 
   if (instrumentedServer[toolInstrumentationMarker] === true) {
     return;
   }
 
-  const originalTool = instrumentedServer.tool.bind(server);
-  instrumentedServer.tool = ((name, description, schema, handler) => {
+  const originalTool = (server.tool as (...toolArgs: Array<any>) => unknown).bind(server);
+
+  (server as McpServer & { tool: (...toolArgs: Array<any>) => unknown }).tool = (...toolArgs: Array<any>) => {
+    const maybeHandler = toolArgs.at(-1);
+    if (typeof maybeHandler !== "function") {
+      return originalTool(...toolArgs);
+    }
+
+    const toolName = typeof toolArgs[0] === "string" ? toolArgs[0] : "unknown";
     const wrappedHandler: ToolHandler = async (...args: Array<any>) => {
       const verboseFallback = getServerEnvConfig().verboseMode;
 
       return ensureRequestContext(verboseFallback, async () => {
         const startedAt = Date.now();
         const input = args[0] as Record<string, unknown> | undefined;
-        recordDiagnosticEvent("tool.start", `Tool ${name} started`, { tool: name, args: input });
-        logDiagnostic("info", "MCP tool started", { tool: name, args: input });
+        recordDiagnosticEvent("tool.start", `Tool ${toolName} started`, { tool: toolName, args: input });
+        logDiagnostic("info", "MCP tool started", { tool: toolName, args: input });
 
         try {
-          const result = await Promise.resolve(handler(...args));
+          const result = await Promise.resolve(maybeHandler(...args));
           const durationMs = Date.now() - startedAt;
-          recordDiagnosticEvent("tool.success", `Tool ${name} completed`, { tool: name, duration_ms: durationMs });
-          logDiagnostic("info", "MCP tool completed", { tool: name, duration_ms: durationMs });
-          return decorateToolResultWithDiagnostics(result as ToolResult, name, durationMs);
+          recordDiagnosticEvent("tool.success", `Tool ${toolName} completed`, { tool: toolName, duration_ms: durationMs });
+          logDiagnostic("info", "MCP tool completed", { tool: toolName, duration_ms: durationMs });
+          return decorateToolResultWithDiagnostics(result as ToolResult, toolName, durationMs);
         } catch (error: unknown) {
           const durationMs = Date.now() - startedAt;
-          recordDiagnosticEvent("tool.error", `Tool ${name} failed`, {
-            tool: name,
+          recordDiagnosticEvent("tool.error", `Tool ${toolName} failed`, {
+            tool: toolName,
             duration_ms: durationMs,
             error,
           });
           logDiagnostic("error", "MCP tool failed", {
-            tool: name,
+            tool: toolName,
             duration_ms: durationMs,
             error,
           });
@@ -367,8 +365,10 @@ export function instrumentServerTools(server: McpServer): void {
       });
     };
 
-    return originalTool(name, description, schema, wrappedHandler);
-  }) as ToolRegistration;
+    const forwardedArgs = [...toolArgs];
+    forwardedArgs[forwardedArgs.length - 1] = wrappedHandler;
+    return originalTool(...forwardedArgs);
+  };
 
   instrumentedServer[toolInstrumentationMarker] = true;
 }
