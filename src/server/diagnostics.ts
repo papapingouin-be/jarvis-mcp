@@ -324,9 +324,9 @@ export function instrumentServerTools(server: McpServer): void {
     return;
   }
 
-  const originalTool = (server.tool as (...toolArgs: Array<any>) => unknown).bind(server);
+  const originalTool = server.tool.bind(server) as (...toolArgs: Array<any>) => unknown;
 
-  (server as McpServer & { tool: (...toolArgs: Array<any>) => unknown }).tool = (...toolArgs: Array<any>) => {
+  const patchedTool = ((...toolArgs: Array<any>) => {
     const maybeHandler = toolArgs.at(-1);
     if (typeof maybeHandler !== "function") {
       return originalTool(...toolArgs);
@@ -368,7 +368,9 @@ export function instrumentServerTools(server: McpServer): void {
     const forwardedArgs = [...toolArgs];
     forwardedArgs[forwardedArgs.length - 1] = wrappedHandler;
     return originalTool(...forwardedArgs);
-  };
+  }) as unknown as McpServer["tool"];
+
+  (server as unknown as { tool: unknown }).tool = patchedTool;
 
   instrumentedServer[toolInstrumentationMarker] = true;
 }
