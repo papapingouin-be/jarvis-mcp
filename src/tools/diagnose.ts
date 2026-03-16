@@ -2,12 +2,15 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getServerEnvConfig } from "../config/env.js";
 import type { RegisterableModule } from "../registry/types.js";
+import { getDiagnosticsRuntimeConfig, getRecentDiagnosticEvents } from "../server/diagnostics.js";
 import { getRuntimeState } from "../server/runtime-state.js";
 
-function diagnosePayload(): Record<string, unknown> {
+function diagnosePayload(verbose = false): Record<string, unknown> {
   const runtime = getRuntimeState();
   const uptimeSec = Math.floor((Date.now() - runtime.startedAt) / 1000);
-  const expectedEnvVars = getServerEnvConfig().diagnoseEnvVars;
+  const envConfig = getServerEnvConfig();
+  const loggingConfig = getDiagnosticsRuntimeConfig();
+  const expectedEnvVars = envConfig.diagnoseEnvVars;
 
   const env = Object.fromEntries(
     expectedEnvVars.map((name) => [name, Boolean(process.env[name])])
@@ -28,6 +31,12 @@ function diagnosePayload(): Record<string, unknown> {
     uptimeSec,
     env,
     tools: runtime.tools,
+    logging: {
+      log_file_path: loggingConfig.logFilePath,
+      verbose_mode: loggingConfig.verboseMode,
+      recent_event_limit: loggingConfig.recentEventLimit,
+    },
+    recentEvents: verbose ? getRecentDiagnosticEvents(25) : undefined,
   };
 }
 
@@ -40,10 +49,10 @@ const diagnoseModule: RegisterableModule = {
       "diagnose",
       "Return MCP runtime diagnostics (transport/version/uptime/env presence/tools).",
       {
-        verbose: z.boolean().optional().describe("Reserved for future detail level; currently ignored."),
+        verbose: z.boolean().optional().describe("When true, include recent MCP events and logging settings."),
       },
-      async () => {
-        const payload = diagnosePayload();
+      async (args) => {
+        const payload = diagnosePayload(args.verbose === true);
         return {
           content: [
             {

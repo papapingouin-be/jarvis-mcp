@@ -72,6 +72,23 @@ function parsePort(raw: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
+  if (raw === undefined) {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+}
+
 function toScriptDefinition(name: string, input: ScriptDefinition | ScriptRegistryInput[string]): ScriptDefinition {
   return {
     name: input.name ?? name,
@@ -123,6 +140,9 @@ export function getServerEnvConfig(): {
   port: number;
   corsOrigin: string;
   diagnoseEnvVars: Array<string>;
+  logFilePath: string;
+  verboseMode: boolean;
+  recentEventLimit: number;
 } {
   const rawTransportMode = firstNonEmptyValue("STARTER_TRANSPORT");
   const transportMode = rawTransportMode === "http" ? "http" : "stdio";
@@ -132,6 +152,9 @@ export function getServerEnvConfig(): {
     port: parsePort(firstNonEmptyValue("PORT"), 3000),
     corsOrigin: firstNonEmptyValue("CORS_ORIGIN") ?? "*",
     diagnoseEnvVars: parseStringList(firstNonEmptyValue("JARVIS_DIAGNOSE_ENV_VARS"), DEFAULT_DIAGNOSE_ENV_VARS),
+    logFilePath: path.resolve(firstNonEmptyValue("JARVIS_LOG_FILE") ?? path.join(process.cwd(), "logs", "mcp-server.log")),
+    verboseMode: parseBoolean(firstNonEmptyValue("JARVIS_VERBOSE_MODE"), false),
+    recentEventLimit: parsePort(firstNonEmptyValue("JARVIS_RECENT_EVENT_LIMIT"), 200),
   };
 }
 

@@ -8,6 +8,16 @@ import express, { type Express, type Request, type Response } from "express";
 import { loadServerConfig } from "../config/service.js";
 import { SERVER_NAME, SERVER_VERSION, type TransportMode } from "../config/env.js";
 import { autoRegisterModules } from "../registry/auto-loader.js";
+import {
+  createRequestContext,
+  extractClientIp,
+  instrumentServerTools,
+  isVerboseHttpRequest,
+  logDiagnostic,
+  recordDiagnosticEvent,
+  setCurrentSessionId,
+  withRequestContext,
+} from "./diagnostics.js";
 import { setRuntimeState } from "./runtime-state.js";
 import { MCP_SESSION_HEADER, MCP_SESSION_HEADER_LOWER } from "./session.js";
 
@@ -31,6 +41,8 @@ export function createApp(corsOrigin: string): Express {
         MCP_SESSION_HEADER,
         MCP_SESSION_HEADER_LOWER,
         "x-mcp-session",
+        "x-jarvis-verbose",
+        "x-openwebui-verbose",
       ],
       exposedHeaders: [MCP_SESSION_HEADER, MCP_SESSION_HEADER_LOWER],
     }),
@@ -45,10 +57,17 @@ async function createRegisteredServer(): Promise<{ server: McpServer; registered
     version: SERVER_VERSION,
   });
 
+  instrumentServerTools(server);
+
   const registrationResults = await autoRegisterModules(server);
   const registeredTools = registrationResults
     .filter((result) => result.success && result.type === "tool")
     .map((result) => result.name);
+
+  logDiagnostic("info", "MCP server modules registered", {
+    tool_count: registeredTools.length,
+    tools: registeredTools,
+  });
 
   return { server, registeredTools };
 }
@@ -138,12 +157,15 @@ function getExistingSession(
 
   const session = sessions.get(sessionId);
   if (!session) {
-    console.log(`[mcp/http] session not found sid=${sessionId}`);
+    logDiagnostic("warn", "MCP session not found", { session_id: sessionId, method: req.method });
     sendJsonRpcError(res, 404, -32001, "Session not found");
     return undefined;
   }
 
-  console.log(`[mcp/http] request on existing session sid=${sessionId} method=${req.method}`);
+  recordDiagnosticEvent("session.reused", "Request matched existing session", {
+    session_id: sessionId,
+    method: req.method,
+  });
   return session;
 }
 
@@ -154,7 +176,9 @@ async function handleInitialize(req: Request, res: Response, sessions: SessionCo
     return;
   }
 
-  console.log("[mcp/http] initialize request received");
+  recordDiagnosticEvent("session.initialize", "Initialize request received", {
+    client_info: req.body?.params?.clientInfo,
+  });
 
   const transport = createTransport();
   const { server } = await createRegisteredServer();
@@ -163,13 +187,15 @@ async function handleInitialize(req: Request, res: Response, sessions: SessionCo
 
   const sessionId = getSessionIdFromResponse(res);
   if (!sessionId) {
-    console.log("[mcp/http] initialize response missing session id header");
+    logDiagnostic("warn", "Initialize response missing session id header");
     await transport.close();
     return;
   }
 
   sessions.set(sessionId, { server, transport });
-  console.log(`[mcp/http] session created sid=${sessionId}`);
+  setCurrentSessionId(sessionId);
+  recordDiagnosticEvent("session.created", "MCP session created", { session_id: sessionId });
+  logDiagnostic("info", "MCP session created", { session_id: sessionId });
 }
 
 async function handleSessionDelete(req: Request, res: Response, sessions: SessionContextMap): Promise<void> {
@@ -181,7 +207,7 @@ async function handleSessionDelete(req: Request, res: Response, sessions: Sessio
 
   const session = sessions.get(sessionId);
   if (!session) {
-    console.log(`[mcp/http] delete requested for unknown session sid=${sessionId}`);
+    logDiagnostic("warn", "Delete requested for unknown session", { session_id: sessionId });
     sendJsonRpcError(res, 404, -32001, "Session not found");
     return;
   }
@@ -189,7 +215,61 @@ async function handleSessionDelete(req: Request, res: Response, sessions: Sessio
   await session.transport.handleRequest(req, res, req.body);
   sessions.delete(sessionId);
   await session.transport.close();
-  console.log(`[mcp/http] session closed sid=${sessionId}`);
+  recordDiagnosticEvent("session.closed", "MCP session closed", { session_id: sessionId });
+  logDiagnostic("info", "MCP session closed", { session_id: sessionId });
+}
+
+async function runHttpRequestWithDiagnostics(
+  req: Request,
+  res: Response,
+  handler: () => Promise<void>,
+): Promise<void> {
+  const context = createRequestContext({
+    transport: "http",
+    sessionId: getSessionIdFromRequest(req),
+    ip: extractClientIp(req),
+    verbose: isVerboseHttpRequest(req),
+  });
+
+  await withRequestContext(context, async () => {
+    const startedAt = Date.now();
+    const mcpMethod = typeof req.body?.method === "string" ? req.body.method : undefined;
+
+    recordDiagnosticEvent("request.received", "Incoming MCP HTTP request", {
+      http_method: req.method,
+      path: req.path,
+      mcp_method: mcpMethod,
+      body_id: req.body?.id,
+      query: req.query,
+    });
+    logDiagnostic("info", "Incoming MCP HTTP request", {
+      http_method: req.method,
+      path: req.path,
+      mcp_method: mcpMethod,
+      body_id: req.body?.id,
+      verbose: context.verbose,
+    });
+
+    try {
+      await handler();
+    } finally {
+      const durationMs = Date.now() - startedAt;
+      recordDiagnosticEvent("request.completed", "MCP HTTP request completed", {
+        http_method: req.method,
+        path: req.path,
+        mcp_method: mcpMethod,
+        status_code: res.statusCode,
+        duration_ms: durationMs,
+      });
+      logDiagnostic("info", "MCP HTTP request completed", {
+        http_method: req.method,
+        path: req.path,
+        mcp_method: mcpMethod,
+        status_code: res.statusCode,
+        duration_ms: durationMs,
+      });
+    }
+  });
 }
 
 export async function boot(mode?: TransportMode): Promise<void> {
@@ -205,9 +285,17 @@ export async function boot(mode?: TransportMode): Promise<void> {
     startedAt: Date.now(),
   });
 
+  logDiagnostic("info", "MCP server booting", {
+    transport: transportMode,
+    verbose_mode: runtimeConfig.verboseMode,
+    log_file_path: runtimeConfig.logFilePath,
+    recent_event_limit: runtimeConfig.recentEventLimit,
+  });
+
   if (transportMode === "stdio") {
     const transport = new StdioServerTransport();
     await bootstrap.server.connect(transport);
+    logDiagnostic("info", "MCP stdio server running", { transport: "stdio" });
     console.error("[mcp/stdio] server running on stdio");
     return;
   }
@@ -219,71 +307,83 @@ export async function boot(mode?: TransportMode): Promise<void> {
   app.use("/mcp", sessionMiddleware());
 
   app.post("/mcp", async (req, res) => {
-    try {
-      if (isInitializeRequest(req)) {
-        await handleInitialize(req, res, sessions);
-        return;
-      }
-
-      if (isInitializedNotification(req)) {
-        console.log("[mcp/http] initialized notification received");
-      }
-
-      const session = getExistingSession(req, res, sessions);
-      if (!session) {
-        if (!res.headersSent) {
-          sendJsonRpcError(res, 400, -32600, "Session id header is required");
+    await runHttpRequestWithDiagnostics(req, res, async () => {
+      try {
+        if (isInitializeRequest(req)) {
+          await handleInitialize(req, res, sessions);
+          return;
         }
-        return;
-      }
 
-      await session.transport.handleRequest(req, res, req.body);
-    } catch (error) {
-      console.error("[mcp/http] POST handler error:", error);
-      if (!res.headersSent) {
-        sendJsonRpcError(res, 500, -32603, "Internal error");
+        if (isInitializedNotification(req)) {
+          recordDiagnosticEvent("session.initialized", "Initialized notification received", {
+            session_id: getSessionIdFromRequest(req),
+          });
+        }
+
+        const session = getExistingSession(req, res, sessions);
+        if (!session) {
+          if (!res.headersSent) {
+            sendJsonRpcError(res, 400, -32600, "Session id header is required");
+          }
+          return;
+        }
+
+        await session.transport.handleRequest(req, res, req.body);
+      } catch (error) {
+        logDiagnostic("error", "MCP HTTP POST handler error", { error });
+        if (!res.headersSent) {
+          sendJsonRpcError(res, 500, -32603, "Internal error");
+        }
       }
-    }
+    });
   });
 
   app.get("/mcp", async (req, res) => {
-    try {
-      const session = getExistingSession(req, res, sessions);
-      if (!session) {
-        if (!res.headersSent) {
-          sendJsonRpcError(res, 400, -32000, "SSE stream requires an initialized MCP session. Call initialize first.");
+    await runHttpRequestWithDiagnostics(req, res, async () => {
+      try {
+        const session = getExistingSession(req, res, sessions);
+        if (!session) {
+          if (!res.headersSent) {
+            sendJsonRpcError(res, 400, -32000, "SSE stream requires an initialized MCP session. Call initialize first.");
+          }
+          return;
         }
-        return;
-      }
 
-      await session.transport.handleRequest(req, res);
-    } catch (error) {
-      console.error("[mcp/http] GET handler error:", error);
-      if (!res.headersSent) {
-        sendJsonRpcError(res, 500, -32603, "Internal error");
+        await session.transport.handleRequest(req, res);
+      } catch (error) {
+        logDiagnostic("error", "MCP HTTP GET handler error", { error });
+        if (!res.headersSent) {
+          sendJsonRpcError(res, 500, -32603, "Internal error");
+        }
       }
-    }
+    });
   });
 
   app.delete("/mcp", async (req, res) => {
-    try {
-      await handleSessionDelete(req, res, sessions);
-    } catch (error) {
-      console.error("[mcp/http] DELETE handler error:", error);
-      if (!res.headersSent) {
-        sendJsonRpcError(res, 500, -32603, "Internal error");
+    await runHttpRequestWithDiagnostics(req, res, async () => {
+      try {
+        await handleSessionDelete(req, res, sessions);
+      } catch (error) {
+        logDiagnostic("error", "MCP HTTP DELETE handler error", { error });
+        if (!res.headersSent) {
+          sendJsonRpcError(res, 500, -32603, "Internal error");
+        }
       }
-    }
+    });
   });
 
   const port = runtimeConfig.port;
   const httpServer = app.listen(port, () => {
+    logDiagnostic("info", "MCP HTTP server listening", {
+      url: `http://localhost:${String(port)}/mcp`,
+      cors_origin: corsOrigin,
+    });
     console.log(`[mcp/http] listening on http://localhost:${String(port)}/mcp`);
     console.log(`[mcp/http] cors origin: ${corsOrigin}`);
   });
 
   process.on("SIGINT", () => {
-    console.log("[mcp/http] shutting down...");
+    logDiagnostic("info", "MCP HTTP server shutting down", { open_sessions: sessions.size });
     const closing = Array.from(sessions.values()).map((session) => session.transport.close());
     void Promise.allSettled(closing).finally(() => {
       httpServer.close(() => {
