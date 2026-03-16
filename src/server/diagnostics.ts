@@ -67,6 +67,10 @@ function isSensitiveKey(key: string): boolean {
   return /(password|secret|token|authorization|api[_-]?key|master[_-]?key)/i.test(key);
 }
 
+function truncateValue(value: string, maxLength = 400): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
 export function sanitizeForLogs(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => sanitizeForLogs(entry));
@@ -90,6 +94,18 @@ export function sanitizeForLogs(value: unknown): unknown {
   }
 
   return value;
+}
+
+function stringifyData(data?: Record<string, unknown>): string {
+  if (data === undefined) {
+    return "{}";
+  }
+
+  try {
+    return JSON.stringify(sanitizeForLogs(data));
+  } catch {
+    return '{"unserializable":true}';
+  }
 }
 
 async function appendLogLine(serializedLine: string): Promise<void> {
@@ -120,22 +136,40 @@ function serializeLogLine(level: LogLevel, message: string, context?: RequestCon
   });
 }
 
+function formatConsoleLogLine(level: LogLevel, message: string, context?: RequestContext, data?: Record<string, unknown>): string {
+  const levelLabel = level === "error" ? "ERR" : level === "warn" ? "WRN" : level === "debug" ? "DBG" : "INF";
+  const timestamp = new Date().toISOString();
+  const parts = [
+    levelLabel,
+    message,
+    `timestamp=${timestamp}`,
+    `requestId=${context?.requestId ?? "-"}`,
+    `sessionId=${context?.sessionId ?? "-"}`,
+    `ip=${context?.ip ?? "-"}`,
+    `transport=${context?.transport ?? "-"}`,
+  ];
+
+  if (data !== undefined) {
+    parts.push(`data=${truncateValue(stringifyData(data), 1200)}`);
+  }
+
+  return parts.join(" | ");
+}
+
 export function logDiagnostic(level: LogLevel, message: string, data?: Record<string, unknown>): void {
   const context = requestContextStorage.getStore();
   const serializedLine = serializeLogLine(level, message, context, data);
+  const consoleLine = formatConsoleLogLine(level, message, context, data);
 
   if (level === "error") {
-    console.error(serializedLine);
+    console.error(consoleLine);
   } else {
-    console.log(serializedLine);
+    console.log(consoleLine);
   }
 
   void appendLogLine(serializedLine).catch((error: unknown) => {
-    console.error(JSON.stringify({
-      timestamp: new Date().toISOString(),
-      level: "error",
-      message: "Failed to write MCP diagnostic log",
-      data: sanitizeForLogs(error),
+    console.error(formatConsoleLogLine("error", "Failed to write MCP diagnostic log", undefined, {
+      error: sanitizeForLogs(error) as Record<string, unknown>,
     }));
   });
 }
@@ -257,6 +291,36 @@ function summarizeContextForTool(toolName: string, durationMs: number, context: 
   };
 }
 
+function summarizeToolResult(result: ToolResult): Record<string, unknown> {
+  const summary: Record<string, unknown> = {
+    is_error: result.isError === true,
+    content_items: Array.isArray(result.content) ? result.content.length : 0,
+  };
+
+  const firstText = result.content?.find((item) => item.type === "text" && typeof item.text === "string")?.text;
+  if (typeof firstText !== "string") {
+    return summary;
+  }
+
+  summary.first_text_preview = truncateValue(firstText, 300);
+
+  try {
+    const parsed = JSON.parse(firstText) as unknown;
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const payload = parsed as Record<string, unknown>;
+      summary.ok = payload.ok ?? null;
+      if (payload.error && typeof payload.error === "object" && !Array.isArray(payload.error)) {
+        const errorPayload = payload.error as Record<string, unknown>;
+        summary.error_code = errorPayload.code ?? null;
+        summary.error_message = errorPayload.message ?? null;
+      }
+    }
+  } catch {
+  }
+
+  return sanitizeForLogs(summary) as Record<string, unknown>;
+}
+
 export function decorateToolResultWithDiagnostics(
   result: ToolResult,
   toolName: string,
@@ -343,11 +407,20 @@ export function instrumentServerTools(server: McpServer): void {
         logDiagnostic("info", "MCP tool started", { tool: toolName, args: input });
 
         try {
-          const result = await Promise.resolve(maybeHandler(...args));
+          const result = await Promise.resolve(maybeHandler(...args)) as ToolResult;
           const durationMs = Date.now() - startedAt;
-          recordDiagnosticEvent("tool.success", `Tool ${toolName} completed`, { tool: toolName, duration_ms: durationMs });
-          logDiagnostic("info", "MCP tool completed", { tool: toolName, duration_ms: durationMs });
-          return decorateToolResultWithDiagnostics(result as ToolResult, toolName, durationMs);
+          const resultSummary = summarizeToolResult(result);
+          recordDiagnosticEvent(
+            result.isError === true ? "tool.returned_error" : "tool.success",
+            result.isError === true ? `Tool ${toolName} returned an error payload` : `Tool ${toolName} completed`,
+            { tool: toolName, duration_ms: durationMs, result: resultSummary },
+          );
+          logDiagnostic(
+            result.isError === true ? "warn" : "info",
+            result.isError === true ? "MCP tool returned an error payload" : "MCP tool completed",
+            { tool: toolName, duration_ms: durationMs, result: resultSummary },
+          );
+          return decorateToolResultWithDiagnostics(result, toolName, durationMs);
         } catch (error: unknown) {
           const durationMs = Date.now() - startedAt;
           recordDiagnosticEvent("tool.error", `Tool ${toolName} failed`, {
