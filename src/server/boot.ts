@@ -145,6 +145,57 @@ function sendJsonRpcError(res: Response, status: number, code: number, message: 
   });
 }
 
+function summarizeParams(method: string | undefined, params: unknown): Record<string, unknown> | undefined {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    return undefined;
+  }
+
+  const payload = params as Record<string, unknown>;
+
+  switch (method) {
+    case "tools/call":
+      return {
+        tool_name: payload.name ?? null,
+        arguments: payload.arguments ?? null,
+      };
+    case "resources/read":
+      return {
+        uri: payload.uri ?? null,
+      };
+    case "prompts/get":
+      return {
+        prompt_name: payload.name ?? null,
+        arguments: payload.arguments ?? null,
+      };
+    case "initialize":
+      return {
+        client_info: payload.clientInfo ?? null,
+        capabilities: payload.capabilities ?? null,
+      };
+    default:
+      return payload;
+  }
+}
+
+function buildRequestDetails(req: Request): Record<string, unknown> {
+  const body = req.body as { id?: unknown; method?: unknown; params?: unknown } | undefined;
+  const mcpMethod = typeof body?.method === "string" ? body.method : undefined;
+  const isSseStream = req.method === "GET";
+
+  return {
+    http_method: req.method,
+    path: req.path,
+    request_kind: isSseStream ? "sse_stream" : "rpc_call",
+    request_purpose: isSseStream
+      ? "Open MCP SSE stream for server notifications and responses"
+      : "Handle MCP JSON-RPC request",
+    mcp_method: mcpMethod ?? (isSseStream ? "sse/connect" : undefined),
+    body_id: body?.id,
+    params_preview: summarizeParams(mcpMethod, body?.params),
+    verbose: isVerboseHttpRequest(req),
+  };
+}
+
 function getExistingSession(
   req: Request,
   res: Response,
@@ -233,41 +284,23 @@ async function runHttpRequestWithDiagnostics(
 
   await withRequestContext(context, async () => {
     const startedAt = Date.now();
-    const mcpMethod = typeof req.body?.method === "string" ? req.body.method : undefined;
+    const requestDetails = buildRequestDetails(req);
 
-    recordDiagnosticEvent("request.received", "Incoming MCP HTTP request", {
-      http_method: req.method,
-      path: req.path,
-      mcp_method: mcpMethod,
-      body_id: req.body?.id,
-      query: req.query,
-    });
-    logDiagnostic("info", "Incoming MCP HTTP request", {
-      http_method: req.method,
-      path: req.path,
-      mcp_method: mcpMethod,
-      body_id: req.body?.id,
-      verbose: context.verbose,
-    });
+    recordDiagnosticEvent("request.received", "Incoming MCP HTTP request", requestDetails);
+    logDiagnostic("info", "Incoming MCP HTTP request", requestDetails);
 
     try {
       await handler();
     } finally {
       const durationMs = Date.now() - startedAt;
-      recordDiagnosticEvent("request.completed", "MCP HTTP request completed", {
-        http_method: req.method,
-        path: req.path,
-        mcp_method: mcpMethod,
+      const completionDetails = {
+        ...requestDetails,
         status_code: res.statusCode,
         duration_ms: durationMs,
-      });
-      logDiagnostic("info", "MCP HTTP request completed", {
-        http_method: req.method,
-        path: req.path,
-        mcp_method: mcpMethod,
-        status_code: res.statusCode,
-        duration_ms: durationMs,
-      });
+      };
+
+      recordDiagnosticEvent("request.completed", "MCP HTTP request completed", completionDetails);
+      logDiagnostic("info", "MCP HTTP request completed", completionDetails);
     }
   });
 }
