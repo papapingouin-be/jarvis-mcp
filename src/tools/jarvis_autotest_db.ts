@@ -7,6 +7,16 @@ import { getGitBridgeEnvConfig } from "../config/env.js";
 import { JarvisGitBridgeError, asSafeError } from "../modules/jarvis_git_bridge/services/errors.js";
 import { ScriptRunnerError, asScriptRunnerError } from "../modules/script_runner/services/errors.js";
 
+type StepName =
+  | "resolve_config"
+  | "connect_db"
+  | "connectivity_query"
+  | "git_bridge_migrations"
+  | "config_store_migrations"
+  | "app_config_read"
+  | "script_registry_read"
+  | "script_env_read";
+
 function toSuccessPayload(data: Record<string, unknown>): {
   content: Array<{ type: "text"; text: string }>;
 } {
@@ -18,7 +28,33 @@ function toSuccessPayload(data: Record<string, unknown>): {
   };
 }
 
-function toFailurePayload(error: unknown): {
+function buildRecommendations(errorCode: string): Array<string> {
+  switch (errorCode) {
+    case "DATABASE_URL_MISSING":
+      return [
+        "Define DATABASE_URL or jarvis_tools_PG_URL/jarvis_tools_PG_DB/jarvis_tools_PG_USER/jarvis_tools_PG_PASSWORD.",
+        "Restart the MCP server after updating the environment.",
+      ];
+    case "PG_MODULE_MISSING":
+      return [
+        "Install the PostgreSQL driver package 'pg' in the runtime environment.",
+        "If you use another driver name, set JARVIS_GIT_BRIDGE_PG_MODULE or jarvis_tools_GIT_BRIDGE_PG_MODULE.",
+      ];
+    default:
+      return [
+        "Check database reachability from the MCP runtime container/process.",
+        "Check PostgreSQL credentials and permissions.",
+        "Inspect server logs around the reported failed_step for the low-level cause.",
+      ];
+  }
+}
+
+function toFailurePayload(
+  error: unknown,
+  failedStep: StepName,
+  checks: Record<string, unknown>,
+  configSnapshot: Record<string, unknown>,
+): {
   content: Array<{ type: "text"; text: string }>;
 } {
   const safeError = error instanceof JarvisGitBridgeError
@@ -33,13 +69,14 @@ function toFailurePayload(error: unknown): {
       text: JSON.stringify({
         ok: false,
         status: "KO",
-        checks: {
-          connection_string_present: Boolean(getGitBridgeEnvConfig().database.connectionString),
-        },
+        failed_step: failedStep,
+        checks,
+        config: configSnapshot,
         error: {
           code: safeError.code,
           message: safeError.safeMessage,
         },
+        recommendations: buildRecommendations(safeError.code),
       }),
     }],
   };
@@ -56,40 +93,84 @@ const jarvisAutotestDbModule: RegisterableModule = {
       {},
       async () => {
         let db: Awaited<ReturnType<typeof createDatabaseClientFromEnv>> | undefined;
+        let failedStep: StepName = "resolve_config";
+
+        const gitBridgeConfig = getGitBridgeEnvConfig();
+        const configSnapshot = {
+          connection_string_present: Boolean(gitBridgeConfig.database.connectionString),
+          connection_string_source: process.env.DATABASE_URL
+            ? "DATABASE_URL"
+            : process.env.jarvis_tools_DATABASE_URL
+              ? "jarvis_tools_DATABASE_URL"
+              : process.env.jarvis_tools_PG_URL
+                ? "jarvis_tools_PG_*"
+                : "missing",
+          pg_module_name: gitBridgeConfig.database.pgModuleName,
+          env_presence: {
+            DATABASE_URL: Boolean(process.env.DATABASE_URL),
+            jarvis_tools_DATABASE_URL: Boolean(process.env.jarvis_tools_DATABASE_URL),
+            jarvis_tools_PG_URL: Boolean(process.env.jarvis_tools_PG_URL),
+            jarvis_tools_PG_DB: Boolean(process.env.jarvis_tools_PG_DB),
+            jarvis_tools_PG_USER: Boolean(process.env.jarvis_tools_PG_USER),
+            jarvis_tools_PG_PASSWORD: Boolean(process.env.jarvis_tools_PG_PASSWORD),
+          },
+        };
+
+        const checks: Record<string, unknown> = {
+          resolve_config_ok: false,
+          connect_db_ok: false,
+          connectivity_query_ok: false,
+          git_bridge_migrations_ok: false,
+          config_store_migrations_ok: false,
+          app_config_read_ok: false,
+          script_registry_read_ok: false,
+          script_env_read_ok: false,
+        };
 
         try {
-          const gitBridgeConfig = getGitBridgeEnvConfig();
+          checks.resolve_config_ok = configSnapshot.connection_string_present;
+          failedStep = "connect_db";
           db = await createDatabaseClientFromEnv();
+          checks.connect_db_ok = true;
 
-          const connectivityRows = await db.query<Array<{ ok: number; now_utc: string }>[number]>(
-            "SELECT 1 AS ok, NOW()::text AS now_utc"
+          failedStep = "connectivity_query";
+          const connectivityRows = await db.query<Array<{ ok: number; now_utc: string; current_database: string | null }>[number]>(
+            "SELECT 1 AS ok, NOW()::text AS now_utc, current_database()::text AS current_database"
           );
+          checks.connectivity_query_ok = connectivityRows[0]?.ok === 1;
 
+          failedStep = "git_bridge_migrations";
           await runJarvisGitBridgeMigrations(db);
+          checks.git_bridge_migrations_ok = true;
+
+          failedStep = "config_store_migrations";
           await runConfigStoreMigrations(db);
+          checks.config_store_migrations_ok = true;
 
           const appConfigRepository = new AppConfigRepository(db);
           const scriptRegistryRepository = new ScriptRegistryRepository(db);
           const scriptEnvRepository = new ScriptEnvRepository(db);
 
+          failedStep = "app_config_read";
           const appConfigValues = await appConfigRepository.getMany(["server.transport", "server.port", "server.cors_origin"]);
+          checks.app_config_read_ok = true;
+
+          failedStep = "script_registry_read";
           const registry = await scriptRegistryRepository.listActive();
+          checks.script_registry_read_ok = true;
+
+          failedStep = "script_env_read";
           const storedScriptEnv = await scriptEnvRepository.listByScript("proxmox-CTDEV.sh");
+          checks.script_env_read_ok = true;
 
           return toSuccessPayload({
             ok: true,
             status: "OK",
-            checks: {
-              connection_string_present: Boolean(gitBridgeConfig.database.connectionString),
-              pg_module_name: gitBridgeConfig.database.pgModuleName,
-              connectivity_query_ok: connectivityRows[0]?.ok === 1,
-              config_store_migrations_ok: true,
-              app_config_read_ok: true,
-              script_registry_read_ok: true,
-              script_env_read_ok: true,
-            },
+            checks,
+            config: configSnapshot,
             database: {
               now_utc: connectivityRows[0]?.now_utc ?? null,
+              current_database: connectivityRows[0]?.current_database ?? null,
             },
             summary: {
               app_config_keys_read: Object.keys(appConfigValues),
@@ -98,7 +179,7 @@ const jarvisAutotestDbModule: RegisterableModule = {
             },
           });
         } catch (error: unknown) {
-          return toFailurePayload(error);
+          return toFailurePayload(error, failedStep, checks, configSnapshot);
         } finally {
           if (db !== undefined) {
             await db.close();
