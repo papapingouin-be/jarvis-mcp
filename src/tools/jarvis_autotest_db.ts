@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RegisterableModule } from "../registry/types.js";
 import { createDatabaseClientFromEnv } from "../modules/jarvis_git_bridge/db/database.js";
+import { loadInitialMigrationSql } from "../modules/jarvis_git_bridge/db/migrations.js";
 import { runJarvisGitBridgeMigrations } from "../modules/jarvis_git_bridge/db/repositories.js";
 import { AppConfigRepository, runConfigStoreMigrations, ScriptEnvRepository, ScriptRegistryRepository } from "../config/store.js";
 import { getGitBridgeEnvConfig } from "../config/env.js";
@@ -11,6 +12,7 @@ type StepName =
   | "resolve_config"
   | "connect_db"
   | "connectivity_query"
+  | "git_bridge_migration_asset"
   | "git_bridge_migrations"
   | "config_store_migrations"
   | "app_config_read"
@@ -44,7 +46,7 @@ function buildRecommendations(errorCode: string): Array<string> {
       return [
         "Check database reachability from the MCP runtime container/process.",
         "Check PostgreSQL credentials and permissions.",
-        "Inspect server logs around the reported failed_step for the low-level cause.",
+        "Inspect the detailed error.debug fields from this autotest.",
       ];
   }
 }
@@ -63,6 +65,15 @@ function toFailurePayload(
       ? asScriptRunnerError(error)
       : asSafeError(error);
 
+  const errorDetails = error instanceof Error
+    ? {
+        name: error.name,
+        raw_message: error.message,
+      }
+    : {
+        raw_message: String(error),
+      };
+
   return {
     content: [{
       type: "text",
@@ -75,6 +86,7 @@ function toFailurePayload(
         error: {
           code: safeError.code,
           message: safeError.safeMessage,
+          debug: errorDetails,
         },
         recommendations: buildRecommendations(safeError.code),
       }),
@@ -120,6 +132,7 @@ const jarvisAutotestDbModule: RegisterableModule = {
           resolve_config_ok: false,
           connect_db_ok: false,
           connectivity_query_ok: false,
+          git_bridge_migration_asset_ok: false,
           git_bridge_migrations_ok: false,
           config_store_migrations_ok: false,
           app_config_read_ok: false,
@@ -138,6 +151,10 @@ const jarvisAutotestDbModule: RegisterableModule = {
             "SELECT 1 AS ok, NOW()::text AS now_utc, current_database()::text AS current_database"
           );
           checks.connectivity_query_ok = connectivityRows[0]?.ok === 1;
+
+          failedStep = "git_bridge_migration_asset";
+          const gitBridgeMigrationSql = await loadInitialMigrationSql();
+          checks.git_bridge_migration_asset_ok = gitBridgeMigrationSql.trim().length > 0;
 
           failedStep = "git_bridge_migrations";
           await runJarvisGitBridgeMigrations(db);

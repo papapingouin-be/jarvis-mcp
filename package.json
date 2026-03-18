@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node --test \"tests/**/*.test.ts\"",
     "test:watch": "node --test --watch \"tests/**/*.test.ts\"",
-    "build": "tsc && chmod 755 build/index.js",
+    "build": "tsc && node scripts/copy-assets.mjs && chmod 755 build/index.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",

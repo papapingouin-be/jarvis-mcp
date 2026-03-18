@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RegisterableModule } from "../registry/types.js";
 import { getGitBridgeEnvConfig } from "../config/env.js";
@@ -14,6 +15,10 @@ function toPayload(data: Record<string, unknown>): {
     }],
   };
 }
+
+const currentFile = fileURLToPath(import.meta.url);
+const currentDir = path.dirname(currentFile);
+const migrationAssetPath = path.join(currentDir, "..", "modules", "jarvis_git_bridge", "db", "migrations", "001_jarvis_git_bridge.sql");
 
 const jarvisAutotestRuntimeModule: RegisterableModule = {
   type: "tool",
@@ -33,6 +38,7 @@ const jarvisAutotestRuntimeModule: RegisterableModule = {
           package_json_has_pg_dependency: false,
           pg_module_resolvable: false,
           connection_string_present: Boolean(gitBridgeConfig.database.connectionString),
+          git_bridge_migration_asset_present: false,
         };
 
         let packageJsonDependencies: Record<string, string> = {};
@@ -61,9 +67,16 @@ const jarvisAutotestRuntimeModule: RegisterableModule = {
         } catch {
         }
 
+        try {
+          await readFile(migrationAssetPath, "utf8");
+          checks.git_bridge_migration_asset_present = true;
+        } catch {
+        }
+
         const ok = checks.package_json_read_ok === true
           && checks.package_json_has_pg_dependency === true
-          && checks.pg_module_resolvable === true;
+          && checks.pg_module_resolvable === true
+          && checks.git_bridge_migration_asset_present === true;
 
         return toPayload({
           ok,
@@ -74,6 +87,7 @@ const jarvisAutotestRuntimeModule: RegisterableModule = {
             node_version: process.version,
             package_name: packageJsonName,
             pg_module_name: gitBridgeConfig.database.pgModuleName,
+            migration_asset_path: migrationAssetPath,
           },
           config: {
             connection_string_present: Boolean(gitBridgeConfig.database.connectionString),
@@ -93,9 +107,9 @@ const jarvisAutotestRuntimeModule: RegisterableModule = {
           recommendations: ok
             ? []
             : [
-                "Rebuild the runtime image/container after updating dependencies.",
+                "Rebuild the runtime image/container after updating dependencies or build assets.",
                 "Verify that package.json includes pg under dependencies, not only devDependencies.",
-                "Verify that the runtime executes npm install/npm ci after the dependency change.",
+                "Verify that build/modules/jarvis_git_bridge/db/migrations/001_jarvis_git_bridge.sql exists in the runtime image.",
               ],
         });
       }
