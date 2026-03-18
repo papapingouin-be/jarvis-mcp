@@ -1,0 +1,2 @@
+<?php require_once __DIR__.'/../inc/bootstrap.php'; $env=env_all(); ?>
+<div class="stack"><div class="notice">Vue complète des variables visibles par le conteneur PHP.</div><div class="card"><input id="env-filter" type="text" placeholder="Filtrer par nom ou contenu"><table style="margin-top:12px"><thead><tr><th>clé</th><th>valeur</th></tr></thead><tbody><?php foreach($env as $k=>$v): ?><tr data-filter="<?= h($k.' '.$v) ?>"><td><strong><?= h($k) ?></strong></td><td><pre><?= h($v) ?></pre></td></tr><?php endforeach; ?></tbody></table></div></div>
