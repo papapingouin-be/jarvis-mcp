@@ -1,34 +1,52 @@
 <?php
-$db=getenv("DATABASE_URL");
-$conn=pg_connect($db);
+require_once __DIR__ . '/../inc/bootstrap.php';
 
-if(isset($_GET["run"])){
-$name=$_GET["run"];
-$out=shell_exec("/var/www/data/scripts/sh/".$name);
-
-file_put_contents(
-"/var/www/data/logs/actions.log",
-date("c")." run ".$name."\n",
-FILE_APPEND
-);
-
-echo $out;
-exit;
+$d = db_try();
+if (!$d['ok']) {
+    echo jarvis_render_notice('<pre>' . h($d['message']) . '</pre>', 'error');
+    exit;
 }
 
-$res=pg_query($conn,"SELECT * FROM jarvis_script_registry");
+$pdo = $d['pdo'];
 
-echo "<h2>Scripts</h2>";
-echo "<table>";
+if (isset($_GET['run'])) {
+    $name = trim((string) $_GET['run']);
+    $pc = precheck($pdo, $name);
 
-while($r=pg_fetch_assoc($res)){
-echo "<tr>";
-echo "<td>".$r['script_name']."</td>";
-echo "<td>".$r['file_name']."</td>";
-echo "<td>".$r['is_active']."</td>";
-echo "<td><button onclick=\"runScript('".$r['file_name']."')\">RUN</button></td>";
-echo "</tr>";
+    if (!$pc['active']) {
+        throw new RuntimeException('Le script est inactif.');
+    }
+
+    if (!$pc['file_found']) {
+        throw new RuntimeException('Le fichier script est introuvable.');
+    }
+
+    if (count($pc['missing']) > 0) {
+        throw new RuntimeException('Variables manquantes en base : ' . implode(', ', $pc['missing']));
+    }
+
+    $out = run_script_command(build_cmd((string) $pc['row']['file_name'], 'collect', false, []), $pc['script_env']);
+    jarvis_append_log('scripts', $name, 'executed', substr($out, 0, 800));
+    echo '<pre>' . h($out) . '</pre>';
+    exit;
 }
 
-echo "</table>";
-?>
+$res = registry_all($pdo);
+
+echo '<h2>Scripts</h2>';
+echo '<table>';
+echo '<thead><tr><th>script_name</th><th>file_name</th><th>is_active</th><th>vars DB</th><th>action</th></tr></thead><tbody>';
+
+foreach ($res as $row) {
+    $scriptName = (string) $row['script_name'];
+    $scriptEnv = script_env_values($pdo, $scriptName);
+    echo '<tr>';
+    echo '<td>' . h($scriptName) . '</td>';
+    echo '<td>' . h((string) $row['file_name']) . '</td>';
+    echo '<td>' . h((string) $row['is_active']) . '</td>';
+    echo '<td>' . h((string) count($scriptEnv)) . '</td>';
+    echo '<td><button onclick="runScript(\'' . h($scriptName) . '\')">RUN</button></td>';
+    echo '</tr>';
+}
+
+echo '</tbody></table>';
