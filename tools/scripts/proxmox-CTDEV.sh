@@ -178,18 +178,28 @@ collect_phase() {
   local default_template
   default_template="$(printf '%s\n' "$templates" | head -n 1)"
   local warnings_json="[]"
+  local diagnostics_json="{}"
   if [[ -z "$default_template" ]]; then
+    local pveam_available_raw=""
+    local pvesm_status_raw=""
+
     default_template="debian-12-standard_12.7-1_amd64.tar.zst"
+    pveam_available_raw="$(run_remote "pveam available --section system 2>&1 | sed -n '1,20p'" || true)"
+    pvesm_status_raw="$(run_remote "pvesm status 2>&1 | sed -n '1,20p'" || true)"
     warnings_json='["No template was returned by pveam. Verify that the Proxmox appliance repositories are configured and refreshed (for example with pveam update), and that a storage with content type vztmpl is available."]'
+    diagnostics_json="$(printf '{"pveam_available_raw":"%s","pvesm_status_raw":"%s"}' \
+      "$(json_escape "$pveam_available_raw")" \
+      "$(json_escape "$pvesm_status_raw")")"
   fi
 
-  printf '{"ok":true,"phase":"collect","summary":"Collect completed","proxmox":{"host":"%s","web":"%s","ssh_port":"%s"},"templates":%s,"existing_ct":%s,"warnings":%s,"proposed_defaults":{"vmid":"9100","hostname":"ctdev","template":"%s","cores":"2","memory":"2048","storage":"local-lvm","disk":"8","bridge":"vmbr0"},"next_action":"Call jarvis_run_script with phase=execute, confirmed=true, and chosen params"}\n' \
+  printf '{"ok":true,"phase":"collect","summary":"Collect completed","proxmox":{"host":"%s","web":"%s","ssh_port":"%s"},"templates":%s,"existing_ct":%s,"warnings":%s,"diagnostics":%s,"proposed_defaults":{"vmid":"9100","hostname":"ctdev","template":"%s","cores":"2","memory":"2048","storage":"local-lvm","disk":"8","bridge":"vmbr0"},"next_action":"Call jarvis_run_script with phase=execute, confirmed=true, and chosen params"}\n' \
     "$(json_escape "$PROXMOX_HOST")" \
     "$(json_escape "$PROXMOX_WEB")" \
     "$(json_escape "$PROXMOX_SSH_PORT")" \
     "$templates_json" \
     "$ct_json" \
     "$warnings_json" \
+    "$diagnostics_json" \
     "$(json_escape "$default_template")"
 }
 
