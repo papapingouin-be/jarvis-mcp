@@ -118,6 +118,10 @@ run_remote() {
   "${base_ssh[@]}"
 }
 
+remote_template_list_cmd() {
+  printf "%s" "pveam available --section system 2>/dev/null | awk 'NR>1 {for (i=1; i<=NF; i++) if (\$i ~ /\\.tar\\.(gz|xz|zst)\$/) print \$i}'"
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -157,7 +161,7 @@ collect_phase() {
   log "Collecting Proxmox templates and CT inventory"
 
   local templates
-  if ! templates="$(run_remote "pveam available --section system 2>/dev/null | awk 'NR>1 {print \$2}'")"; then
+  if ! templates="$(run_remote "$(remote_template_list_cmd)")"; then
     emit_error "Failed to list Proxmox templates" "SSH/API access failed during collect"
   fi
 
@@ -173,16 +177,19 @@ collect_phase() {
 
   local default_template
   default_template="$(printf '%s\n' "$templates" | head -n 1)"
+  local warnings_json="[]"
   if [[ -z "$default_template" ]]; then
     default_template="debian-12-standard_12.7-1_amd64.tar.zst"
+    warnings_json='["No template was returned by pveam. Verify that the Proxmox appliance repositories are configured and refreshed (for example with pveam update), and that a storage with content type vztmpl is available."]'
   fi
 
-  printf '{"ok":true,"phase":"collect","summary":"Collect completed","proxmox":{"host":"%s","web":"%s","ssh_port":"%s"},"templates":%s,"existing_ct":%s,"proposed_defaults":{"vmid":"9100","hostname":"ctdev","template":"%s","cores":"2","memory":"2048","storage":"local-lvm","disk":"8","bridge":"vmbr0"},"next_action":"Call jarvis_run_script with phase=execute, confirmed=true, and chosen params"}\n' \
+  printf '{"ok":true,"phase":"collect","summary":"Collect completed","proxmox":{"host":"%s","web":"%s","ssh_port":"%s"},"templates":%s,"existing_ct":%s,"warnings":%s,"proposed_defaults":{"vmid":"9100","hostname":"ctdev","template":"%s","cores":"2","memory":"2048","storage":"local-lvm","disk":"8","bridge":"vmbr0"},"next_action":"Call jarvis_run_script with phase=execute, confirmed=true, and chosen params"}\n' \
     "$(json_escape "$PROXMOX_HOST")" \
     "$(json_escape "$PROXMOX_WEB")" \
     "$(json_escape "$PROXMOX_SSH_PORT")" \
     "$templates_json" \
     "$ct_json" \
+    "$warnings_json" \
     "$(json_escape "$default_template")"
 }
 
@@ -210,7 +217,7 @@ execute_phase() {
   [[ "$template" =~ ^[A-Za-z0-9._:-]+$ ]] || emit_error "Invalid template" "template contains unsupported characters"
 
   log "Checking template availability"
-  run_remote "pveam available --section system 2>/dev/null | awk 'NR>1 {print \$2}' | grep -Fx -- '$template' >/dev/null" \
+  run_remote "$(remote_template_list_cmd) | grep -Fx -- '$template' >/dev/null" \
     || emit_error "Template not found" "Selected template is not available"
 
   log "Checking if CT already exists"
