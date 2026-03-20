@@ -79,6 +79,25 @@ check_required_env() {
   fi
 }
 
+require_command() {
+  local command_name="$1"
+  local summary="$2"
+  local details="$3"
+
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    emit_error "$summary" "$details"
+  fi
+}
+
+check_runtime_dependencies() {
+  local phase="$1"
+
+  require_command \
+    ssh \
+    "Missing runtime dependency" \
+    "The '$phase' phase requires the 'ssh' client, but it is not installed in the runtime environment"
+}
+
 run_remote() {
   local remote_cmd="$1"
   local -a base_ssh=(
@@ -133,6 +152,7 @@ parse_args() {
 
 collect_phase() {
   check_required_env
+  check_runtime_dependencies "collect"
 
   log "Collecting Proxmox templates and CT inventory"
 
@@ -168,6 +188,7 @@ collect_phase() {
 
 execute_phase() {
   check_required_env
+  check_runtime_dependencies "execute"
 
   if [[ "$CONFIRMED" != "true" ]]; then
     emit_error "Execution requires confirmation" "Set confirmed=true"
