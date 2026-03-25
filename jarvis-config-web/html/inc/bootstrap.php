@@ -322,87 +322,59 @@ function validate_params_json(string $json): array
     return $decoded;
 }
 
-function script_test_example_payload(string $scriptName, string $phase): array
+function script_test_example_payload(PDO $pdo, string $scriptName, string $phase, ?string $serviceName = null): array
 {
     $normalizedPhase = trim($phase) === '' ? 'collect' : trim($phase);
+    $selectedService = $serviceName !== null && trim($serviceName) !== ''
+        ? trim($serviceName)
+        : null;
+
+    if ($selectedService === null) {
+        $services = script_service_catalog($pdo, $scriptName);
+        foreach ($services as $service) {
+            if (($service['phase'] ?? null) === $normalizedPhase && !empty($service['name'])) {
+                $selectedService = (string) $service['name'];
+                break;
+            }
+        }
+
+        if ($selectedService === null && isset($services[0]['name'])) {
+            $selectedService = (string) $services[0]['name'];
+        }
+    }
+
+    if ($selectedService !== null) {
+        $serviceInfo = script_service_info($pdo, $scriptName, $selectedService);
+        $params = (array) ($serviceInfo['example_params'] ?? []);
+
+        return [
+            'script_name' => $scriptName,
+            'service' => $selectedService,
+            'phase' => (string) ($serviceInfo['phase'] ?? $normalizedPhase),
+            'confirmed' => (bool) ($serviceInfo['confirmed_required'] ?? ($normalizedPhase === 'execute')),
+            'summary' => 'Exemple genere depuis la description du service.',
+            'notes' => [
+                'Exemple base sur le service selectionne dans le script.',
+            ],
+            'params' => $params,
+            'pretty_params_json' => json_encode(
+                $params,
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+            ),
+        ];
+    }
+
     $example = [
         'script_name' => $scriptName,
         'phase' => $normalizedPhase,
         'confirmed' => $normalizedPhase === 'execute',
         'summary' => 'Exemple generique de params JSON.',
         'notes' => [
+            'Le script ne publie pas de service detaille pour cette vue.',
             'Adapte les valeurs a ton environnement avant execution reelle.',
         ],
         'params' => [],
     ];
-
-    if ($scriptName === 'proxmox-diagnose.sh') {
-        if ($normalizedPhase === 'execute') {
-            $example['summary'] = 'Exemple de preflight pour la nouvelle version Proxmox.';
-            $example['params'] = [
-                'mode' => 'preflight-create',
-                'host' => '192.168.11.248',
-                'user' => 'root',
-                'password' => 'change-me',
-                'sudo' => true,
-                'type' => 'ct',
-                'template' => 'debian-12-standard_12.7-1_amd64.tar.zst',
-                'storage' => 'local-lvm',
-                'bridge' => 'vmbr0',
-                'vmid' => '9100',
-                'hostname' => 'ctdev',
-                'cores' => '2',
-                'memory' => '2048',
-                'disk' => '8',
-                'install_ssh' => true,
-            ];
-            $example['notes'] = [
-                'Cet exemple reste non destructif car il utilise mode=preflight-create.',
-                'Pour creer reellement un CT, remplace mode par create-ct.',
-                'Les autres modes utiles sont get-ct-info, stop-ct, destroy-ct et ensure-ct.',
-            ];
-        } else {
-            $example['summary'] = 'Exemple de collecte pour la nouvelle version Proxmox.';
-            $example['confirmed'] = false;
-            $example['params'] = [
-                'mode' => 'collect',
-                'host' => '192.168.11.248',
-                'user' => 'root',
-                'password' => 'change-me',
-                'sudo' => true,
-            ];
-            $example['notes'] = [
-                'Tu peux remplacer mode=collect par diagnose ou self-doc pour des tests plus simples.',
-                'Les variables host, user et password peuvent aussi venir de la DB si tu les stockes comme variables de script.',
-            ];
-        }
-    } elseif ($scriptName === 'proxmox-CTDEV.sh') {
-        if ($normalizedPhase === 'execute') {
-            $example['summary'] = 'Exemple historique pour proxmox-CTDEV.sh.';
-            $example['params'] = [
-                'vmid' => '9100',
-                'hostname' => 'ctdev',
-                'template' => 'debian-12-standard_12.7-1_amd64.tar.zst',
-                'cores' => '2',
-                'memory' => '2048',
-                'storage' => 'local-lvm',
-                'disk' => '8',
-                'bridge' => 'vmbr0',
-            ];
-            $example['notes'] = [
-                'Ce script est le point de depart historique.',
-                'Pour la nouvelle logique de dev et diagnostic, prefere proxmox-diagnose.sh.',
-            ];
-        } else {
-            $example['summary'] = 'La phase collect historique n utilise generalement pas de params.';
-            $example['confirmed'] = false;
-            $example['params'] = [];
-            $example['notes'] = [
-                'La collecte depend surtout des variables Proxmox chargees depuis la DB.',
-                'Pour les nouveaux tests orientes dev, prefere proxmox-diagnose.sh.',
-            ];
-        }
-    }
 
     $example['pretty_params_json'] = json_encode(
         $example['params'],
@@ -412,8 +384,9 @@ function script_test_example_payload(string $scriptName, string $phase): array
     return $example;
 }
 
-function script_test_help_payload(string $scriptName): array
+function script_test_help_payload(PDO $pdo, string $scriptName): array
 {
+    $services = script_service_catalog($pdo, $scriptName);
     $help = [
         'script_name' => $scriptName,
         'mcp_phases' => [
@@ -427,46 +400,21 @@ function script_test_help_payload(string $scriptName): array
         ],
     ];
 
-    if ($scriptName === 'proxmox-diagnose.sh') {
-        $help['modes'] = [
-            'self-doc' => 'Retourne la documentation machine-readable du script.',
-            'diagnose' => 'Teste SSH, contexte distant et commandes Proxmox.',
-            'collect' => 'Collecte templates, storages, bridges, CT/VM et nextid.',
-            'preflight-create' => 'Verifie si une future creation parait faisable.',
-            'create-ct' => 'Cree et demarre un conteneur CT.',
-            'get-ct-info' => 'Lit etat, nom, config et IP d un CT.',
-            'stop-ct' => 'Arrete un CT existant.',
-            'destroy-ct' => 'Supprime un CT existant.',
-            'ensure-ct' => 'Garantit qu un CT existe et tourne.',
-        ];
-        $help['recommended_phase_by_mode'] = [
-            'self-doc' => 'collect',
-            'diagnose' => 'collect',
-            'collect' => 'collect',
-            'preflight-create' => 'execute',
-            'create-ct' => 'execute',
-            'get-ct-info' => 'execute',
-            'stop-ct' => 'execute',
-            'destroy-ct' => 'execute',
-            'ensure-ct' => 'execute',
-        ];
+    foreach ($services as $service) {
+        $name = trim((string) ($service['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+
+        $help['modes'][$name] = (string) ($service['description'] ?? '');
+        $help['recommended_phase_by_mode'][$name] = (string) ($service['phase'] ?? '');
+    }
+
+    if (count($help['modes']) > 0) {
         $help['notes'] = [
-            'Pour ce script, le comportement reel est pilote surtout par params.mode.',
-            'Utilise en general phase=collect pour les lectures et phase=execute pour les actions ou preflights explicites.',
-            'Le bouton Exemple params JSON te donne un preset adapte a la phase courante.',
-        ];
-    } elseif ($scriptName === 'proxmox-CTDEV.sh') {
-        $help['modes'] = [
-            'collect' => 'Collecte templates et CT existants.',
-            'execute' => 'Cree et demarre un CT de developpement.',
-        ];
-        $help['recommended_phase_by_mode'] = [
-            'collect' => 'collect',
-            'execute' => 'execute',
-        ];
-        $help['notes'] = [
-            'Script historique plus simple.',
-            'Pour les nouveaux tests de dev et diagnostic, prefere proxmox-diagnose.sh.',
+            'Les actions affichees ci-dessous viennent directement du script.',
+            'La phase MCP recommandee est determinee depuis la description de chaque action.',
+            'Le bouton Exemple params JSON te donne un preset adapte a l action selectionnee.',
         ];
     } else {
         $help['notes'][] = 'Aucune aide specifique disponible pour ce script.';
@@ -495,148 +443,33 @@ function run_script_json_by_name(PDO $pdo, string $scriptName, string $phase, bo
 
 function script_service_catalog(PDO $pdo, string $scriptName): array
 {
-    if ($scriptName === 'proxmox-diagnose.sh') {
+    try {
         $payload = run_script_json_by_name($pdo, $scriptName, 'collect', false, [
             'mode' => 'list-services',
         ]);
+
         return is_array($payload['services'] ?? null) ? $payload['services'] : [];
+    } catch (Throwable) {
+        return [];
     }
-
-    if ($scriptName === 'proxmox-CTDEV.sh') {
-        return [
-            [
-                'name' => 'collect',
-                'phase' => 'collect',
-                'confirmed_required' => false,
-                'description' => 'Collecte templates disponibles et CT existants.',
-            ],
-            [
-                'name' => 'execute',
-                'phase' => 'execute',
-                'confirmed_required' => true,
-                'description' => 'Cree et demarre un CT de developpement.',
-            ],
-        ];
-    }
-
-    return [];
 }
 
 function script_service_info(PDO $pdo, string $scriptName, string $serviceName): array
 {
-    if ($scriptName === 'proxmox-diagnose.sh') {
-        $payload = run_script_json_by_name($pdo, $scriptName, 'collect', false, [
-            'mode' => 'describe-service',
-            'service' => $serviceName,
-        ]);
-        return is_array($payload['service'] ?? null) ? $payload['service'] : [];
-    }
-
-    if ($scriptName === 'proxmox-CTDEV.sh') {
-        if ($serviceName === 'collect') {
-            return [
-                'name' => 'collect',
-                'phase' => 'collect',
-                'confirmed_required' => false,
-                'description' => 'Collecte templates disponibles et CT existants.',
-                'required_params' => [],
-                'optional_params' => [],
-                'defaults' => [],
-                'example_params' => [],
-            ];
-        }
-
-        if ($serviceName === 'execute') {
-            return [
-                'name' => 'execute',
-                'phase' => 'execute',
-                'confirmed_required' => true,
-                'description' => 'Cree et demarre un CT de developpement.',
-                'required_params' => ['vmid', 'template'],
-                'optional_params' => ['hostname', 'cores', 'memory', 'storage', 'disk', 'bridge'],
-                'defaults' => [
-                    'hostname' => 'ctdev',
-                    'cores' => '2',
-                    'memory' => '2048',
-                    'storage' => 'local-lvm',
-                    'disk' => '8',
-                    'bridge' => 'vmbr0',
-                ],
-                'example_params' => [
-                    'vmid' => '9100',
-                    'hostname' => 'ctdev',
-                    'template' => 'debian-12-standard_12.7-1_amd64.tar.zst',
-                    'cores' => '2',
-                    'memory' => '2048',
-                    'storage' => 'local-lvm',
-                    'disk' => '8',
-                    'bridge' => 'vmbr0',
-                ],
-            ];
-        }
-    }
-
-    throw new RuntimeException('Aucune description de service disponible pour ce script.');
+    $payload = run_script_json_by_name($pdo, $scriptName, 'collect', false, [
+        'mode' => 'describe-service',
+        'service' => $serviceName,
+    ]);
+    return is_array($payload['service'] ?? null) ? $payload['service'] : [];
 }
 
 function script_service_validate(PDO $pdo, string $scriptName, string $serviceName, array $knownParams): array
 {
-    if ($scriptName === 'proxmox-diagnose.sh') {
-        $params = array_merge($knownParams, [
-            'mode' => 'validate-service-input',
-            'service' => $serviceName,
-        ]);
-        return run_script_json_by_name($pdo, $scriptName, 'collect', false, $params);
-    }
-
-    if ($scriptName === 'proxmox-CTDEV.sh') {
-        $service = script_service_info($pdo, $scriptName, $serviceName);
-        $required = is_array($service['required_params'] ?? null) ? $service['required_params'] : [];
-        $optional = is_array($service['optional_params'] ?? null) ? $service['optional_params'] : [];
-        $known = [];
-
-        foreach ($knownParams as $key => $value) {
-            if ($value === '' || $value === null) {
-                continue;
-            }
-            $known[(string) $key] = $value;
-        }
-
-        $missingRequired = [];
-        foreach ($required as $paramName) {
-            $paramKey = (string) $paramName;
-            if (!array_key_exists($paramKey, $known)) {
-                $missingRequired[] = $paramKey;
-            }
-        }
-
-        $optionalMissing = [];
-        foreach ($optional as $paramName) {
-            $paramKey = (string) $paramName;
-            if (!array_key_exists($paramKey, $known)) {
-                $optionalMissing[] = $paramKey;
-            }
-        }
-
-        return [
-            'ok' => true,
-            'mode' => 'validate-service-input',
-            'service' => $serviceName,
-            'phase' => (string) ($service['phase'] ?? ''),
-            'confirmed_required' => (bool) ($service['confirmed_required'] ?? false),
-            'known' => $known,
-            'missing_required' => $missingRequired,
-            'optional_missing' => $optionalMissing,
-            'defaults' => (array) ($service['defaults'] ?? []),
-            'example_params' => (array) ($service['example_params'] ?? []),
-            'ready' => count($missingRequired) === 0,
-            'summary' => count($missingRequired) === 0
-                ? 'Service input is complete.'
-                : 'Service input is missing required fields.',
-        ];
-    }
-
-    throw new RuntimeException('La validation de service n est pas disponible pour ce script.');
+    $params = array_merge($knownParams, [
+        'mode' => 'validate-service-input',
+        'service' => $serviceName,
+    ]);
+    return run_script_json_by_name($pdo, $scriptName, 'collect', false, $params);
 }
 
 function registry_all(PDO $pdo): array
