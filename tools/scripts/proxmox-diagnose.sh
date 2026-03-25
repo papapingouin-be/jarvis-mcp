@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 PHASE=""
 CONFIRMED="false"
@@ -103,7 +103,7 @@ append_bool_flag() {
 is_metadata_mode() {
   local mode="$1"
   case "$mode" in
-    list-services|describe-service|validate-service-input)
+    registry-doc|list-services|describe-service|validate-service-input)
       return 0
       ;;
     *)
@@ -304,6 +304,29 @@ ensure-ct"
   printf '%s' "$output"
 }
 
+registry_required_env_json() {
+  printf '%s' '[
+    {"name":"PROXMOX_HOST","required":false,"secret":false,"description":"Default Proxmox host when params.host is omitted."},
+    {"name":"PROXMOX_USER","required":false,"secret":false,"description":"Default SSH user when params.user is omitted."},
+    {"name":"PROXMOX_SSH_PORT","required":false,"secret":false,"description":"Default SSH port when params.port is omitted."},
+    {"name":"PROXMOX_PASSWORD","required":false,"secret":true,"description":"Optional SSH password when key-based auth is not used."},
+    {"name":"PROXMOX_IDENTITY_FILE","required":false,"secret":false,"description":"Optional SSH identity file path."}
+  ]'
+}
+
+registry_doc_json() {
+  local file_name
+  file_name="$(basename "${BASH_SOURCE[0]}")"
+
+  printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"%s","required_env":%s,"supports_registry":true,"services":%s,"capabilities":["diagnose","collect","preflight-create","create-ct","get-ct-info","stop-ct","destroy-ct","ensure-ct","metadata"],"tags":["proxmox","ssh","container","vm","jarvis"]}}\n' \
+    "$(json_escape "$file_name")" \
+    "$(json_escape "$file_name")" \
+    "$(json_escape "Diagnostic and orchestration wrapper for Proxmox over SSH.")" \
+    "1.0.0" \
+    "$(registry_required_env_json)" \
+    "$(metadata_services_json)"
+}
+
 service_schema_json() {
   local service="$1"
   local mode="${2:-full}"
@@ -414,6 +437,9 @@ handle_metadata_mode() {
   local service="${PARAMS[service]:-}"
 
   case "$mode" in
+    registry-doc)
+      registry_doc_json
+      ;;
     list-services)
       printf '{"ok":true,"mode":"list-services","services":%s,"summary":"Service catalog returned successfully."}\n' \
         "$(metadata_services_json)"
@@ -454,7 +480,7 @@ validate_mode_for_phase() {
   local mode="$1"
 
   case "$PHASE:$mode" in
-    collect:list-services|collect:describe-service|collect:validate-service-input|collect:self-doc|collect:diagnose|collect:collect|collect:preflight-create)
+    collect:registry-doc|collect:list-services|collect:describe-service|collect:validate-service-input|collect:self-doc|collect:diagnose|collect:collect|collect:preflight-create)
       return 0
       ;;
     execute:diagnose|execute:collect|execute:preflight-create|execute:create-ct|execute:get-ct-info|execute:stop-ct|execute:destroy-ct|execute:ensure-ct)
