@@ -3,7 +3,8 @@
 #app{display:flex;min-height:100vh} #sidebar{width:280px;background:var(--panel);padding:18px;border-right:1px solid var(--line);overflow:auto} #main{flex:1;padding:22px}
 .group{margin:18px 0 8px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
 .nav-btn,.primary-btn,.secondary-btn,.danger-btn,.ghost-btn,.copy-btn{display:block;width:100%;text-align:left;padding:10px 12px;margin:0 0 8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);border-radius:10px;cursor:pointer}
-.nav-btn:disabled,.primary-btn:disabled,.secondary-btn:disabled,.danger-btn:disabled,.ghost-btn:disabled,.copy-btn:disabled{opacity:.6;cursor:wait}
+.nav-btn:disabled,.primary-btn:disabled,.secondary-btn:disabled,.danger-btn:disabled,.ghost-btn:disabled,.copy-btn:disabled{opacity:.6;cursor:not-allowed}
+.nav-btn.is-busy,.primary-btn.is-busy,.secondary-btn.is-busy,.danger-btn.is-busy,.ghost-btn.is-busy,.copy-btn.is-busy{cursor:wait}
 .nav-btn.active,.primary-btn{background:var(--acc);border-color:var(--acc)} .secondary-btn,.ghost-btn,.copy-btn{width:auto} .danger-btn{background:#7f1d1d;border-color:#991b1b}
 .topbar{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:16px} .topbar p{margin:0;color:var(--muted)}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px} .notice{padding:12px;border-left:4px solid var(--acc);background:#101827;border-radius:10px;margin-bottom:12px}

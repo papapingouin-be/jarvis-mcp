@@ -223,10 +223,12 @@ function setButtonBusy(button, busyLabel) {
 
   const previousLabel = button.textContent;
   button.disabled = true;
+  button.classList.add("is-busy");
   button.textContent = busyLabel;
 
   return () => {
     button.disabled = false;
+    button.classList.remove("is-busy");
     button.textContent = previousLabel;
   };
 }

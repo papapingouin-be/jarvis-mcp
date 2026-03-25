@@ -502,6 +502,23 @@ function script_service_catalog(PDO $pdo, string $scriptName): array
         return is_array($payload['services'] ?? null) ? $payload['services'] : [];
     }
 
+    if ($scriptName === 'proxmox-CTDEV.sh') {
+        return [
+            [
+                'name' => 'collect',
+                'phase' => 'collect',
+                'confirmed_required' => false,
+                'description' => 'Collecte templates disponibles et CT existants.',
+            ],
+            [
+                'name' => 'execute',
+                'phase' => 'execute',
+                'confirmed_required' => true,
+                'description' => 'Cree et demarre un CT de developpement.',
+            ],
+        ];
+    }
+
     return [];
 }
 
@@ -515,6 +532,50 @@ function script_service_info(PDO $pdo, string $scriptName, string $serviceName):
         return is_array($payload['service'] ?? null) ? $payload['service'] : [];
     }
 
+    if ($scriptName === 'proxmox-CTDEV.sh') {
+        if ($serviceName === 'collect') {
+            return [
+                'name' => 'collect',
+                'phase' => 'collect',
+                'confirmed_required' => false,
+                'description' => 'Collecte templates disponibles et CT existants.',
+                'required_params' => [],
+                'optional_params' => [],
+                'defaults' => [],
+                'example_params' => [],
+            ];
+        }
+
+        if ($serviceName === 'execute') {
+            return [
+                'name' => 'execute',
+                'phase' => 'execute',
+                'confirmed_required' => true,
+                'description' => 'Cree et demarre un CT de developpement.',
+                'required_params' => ['vmid', 'template'],
+                'optional_params' => ['hostname', 'cores', 'memory', 'storage', 'disk', 'bridge'],
+                'defaults' => [
+                    'hostname' => 'ctdev',
+                    'cores' => '2',
+                    'memory' => '2048',
+                    'storage' => 'local-lvm',
+                    'disk' => '8',
+                    'bridge' => 'vmbr0',
+                ],
+                'example_params' => [
+                    'vmid' => '9100',
+                    'hostname' => 'ctdev',
+                    'template' => 'debian-12-standard_12.7-1_amd64.tar.zst',
+                    'cores' => '2',
+                    'memory' => '2048',
+                    'storage' => 'local-lvm',
+                    'disk' => '8',
+                    'bridge' => 'vmbr0',
+                ],
+            ];
+        }
+    }
+
     throw new RuntimeException('Aucune description de service disponible pour ce script.');
 }
 
@@ -526,6 +587,53 @@ function script_service_validate(PDO $pdo, string $scriptName, string $serviceNa
             'service' => $serviceName,
         ]);
         return run_script_json_by_name($pdo, $scriptName, 'collect', false, $params);
+    }
+
+    if ($scriptName === 'proxmox-CTDEV.sh') {
+        $service = script_service_info($pdo, $scriptName, $serviceName);
+        $required = is_array($service['required_params'] ?? null) ? $service['required_params'] : [];
+        $optional = is_array($service['optional_params'] ?? null) ? $service['optional_params'] : [];
+        $known = [];
+
+        foreach ($knownParams as $key => $value) {
+            if ($value === '' || $value === null) {
+                continue;
+            }
+            $known[(string) $key] = $value;
+        }
+
+        $missingRequired = [];
+        foreach ($required as $paramName) {
+            $paramKey = (string) $paramName;
+            if (!array_key_exists($paramKey, $known)) {
+                $missingRequired[] = $paramKey;
+            }
+        }
+
+        $optionalMissing = [];
+        foreach ($optional as $paramName) {
+            $paramKey = (string) $paramName;
+            if (!array_key_exists($paramKey, $known)) {
+                $optionalMissing[] = $paramKey;
+            }
+        }
+
+        return [
+            'ok' => true,
+            'mode' => 'validate-service-input',
+            'service' => $serviceName,
+            'phase' => (string) ($service['phase'] ?? ''),
+            'confirmed_required' => (bool) ($service['confirmed_required'] ?? false),
+            'known' => $known,
+            'missing_required' => $missingRequired,
+            'optional_missing' => $optionalMissing,
+            'defaults' => (array) ($service['defaults'] ?? []),
+            'example_params' => (array) ($service['example_params'] ?? []),
+            'ready' => count($missingRequired) === 0,
+            'summary' => count($missingRequired) === 0
+                ? 'Service input is complete.'
+                : 'Service input is missing required fields.',
+        ];
     }
 
     throw new RuntimeException('La validation de service n est pas disponible pour ce script.');
