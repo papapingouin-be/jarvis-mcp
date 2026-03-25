@@ -1,10 +1,222 @@
-<?php require_once __DIR__.'/../inc/bootstrap.php'; $d=db_try(); if(!$d['ok']){ echo jarvis_render_notice('<pre>'.h($d['message']).'</pre>','error'); exit; } $pdo=$d['pdo']; if(!table_exists($pdo,'jarvis_script_registry')){ echo jarvis_render_notice('La table <code>jarvis_script_registry</code> n’existe pas. Lance le SQL fourni.','warning'); exit; } $msg=''; $type='success'; try{ if($_SERVER['REQUEST_METHOD']==='POST'){ jarvis_check_csrf(); $a=(string)($_POST['form_action']??''); if($a==='add'){ $sn=trim((string)($_POST['script_name']??'')); $fn=trim((string)($_POST['file_name']??'')); $desc=trim((string)($_POST['description']??'')); $req=trim((string)($_POST['required_env_json']??'[]')); $active=isset($_POST['is_active']); if($sn===''||$fn==='') throw new RuntimeException('script_name et file_name sont obligatoires.'); if(!preg_match('/^[a-zA-Z0-9._-]+$/',$sn)) throw new RuntimeException('script_name invalide.'); safe_script_rel($fn); $envs=validate_required_env_json($req); if(registry_exists($pdo,$sn)) throw new RuntimeException('Doublon script_name.'); registry_add($pdo,$sn,$fn,$desc,$envs,$active); $msg='Script ajouté.'; jarvis_append_log('scripts-admin',$sn,'added',$fn);} elseif($a==='toggle'){ registry_toggle($pdo,(string)$_POST['script_name']); $msg='État mis à jour.'; } elseif($a==='delete'){ registry_delete($pdo,(string)$_POST['script_name']); $msg='Script supprimé.'; } } }catch(Throwable $e){ $msg=$e->getMessage(); $type='error'; } $rows=registry_all($pdo); $dbFiles=array_map(fn($r)=>(string)$r['file_name'],$rows); $missing=array_values(array_diff(scan_scripts(),$dbFiles)); ?>
+<?php
+
+require_once __DIR__ . '/../inc/bootstrap.php';
+
+$d = db_try();
+if (!$d['ok']) {
+    echo jarvis_render_notice('<pre>' . h($d['message']) . '</pre>', 'error');
+    exit;
+}
+
+$pdo = $d['pdo'];
+if (!table_exists($pdo, 'jarvis_script_registry')) {
+    echo jarvis_render_notice('La table <code>jarvis_script_registry</code> n existe pas. Lance le SQL fourni.', 'warning');
+    exit;
+}
+
+$msg = '';
+$type = 'success';
+$syncResult = null;
+
+try {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        jarvis_check_csrf();
+        $action = trim((string) ($_POST['form_action'] ?? ''));
+
+        if ($action === 'toggle') {
+            registry_toggle($pdo, trim((string) ($_POST['script_name'] ?? '')));
+            $msg = 'Etat du script mis a jour.';
+        } elseif ($action === 'delete') {
+            $scriptName = trim((string) ($_POST['script_name'] ?? ''));
+            registry_delete($pdo, $scriptName);
+            $msg = 'Script supprime de la registry.';
+        } elseif ($action === 'sync_preview' || $action === 'sync_apply') {
+            $disableMissing = isset($_POST['disable_missing']) ? 'true' : 'false';
+            $dryRun = $action === 'sync_preview' ? 'true' : 'false';
+
+            $syncResult = registry_run_json('sync-registry', 'execute', true, [
+                'dry_run' => $dryRun,
+                'disable_missing' => $disableMissing,
+            ]);
+
+            $msg = $action === 'sync_preview'
+                ? 'Dry-run de synchronisation termine.'
+                : 'Synchronisation de la registry terminee.';
+        }
+    }
+} catch (Throwable $e) {
+    $msg = $e->getMessage();
+    $type = 'error';
+}
+
+$rows = registry_all($pdo);
+$dbByScriptName = [];
+foreach ($rows as $row) {
+    $dbByScriptName[(string) $row['script_name']] = $row;
+}
+
+$scanPayload = null;
+$scanError = null;
+
+try {
+    $scanPayload = registry_run_json('scan-scripts', 'collect', false);
+} catch (Throwable $e) {
+    $scanError = $e->getMessage();
+}
+
+$discoveredScripts = is_array($scanPayload['scripts'] ?? null) ? $scanPayload['scripts'] : [];
+$compatibleScripts = array_values(array_filter(
+    $discoveredScripts,
+    static fn(array $script): bool => !empty($script['registry_compatible'])
+));
+$incompatibleScripts = array_values(array_filter(
+    $discoveredScripts,
+    static fn(array $script): bool => empty($script['registry_compatible'])
+));
+?>
 <div class="stack">
-  <div class="notice">Gestion DB des scripts autorisés. Ici, on administre la registry, on ne lance rien.</div>
-  <?php if($msg!==''): ?><?= jarvis_render_notice(h($msg),$type) ?><?php endif; ?>
-  <div class="card"><h3>Scripts enregistrés</h3><table><thead><tr><th>script_name</th><th>file_name</th><th>description</th><th>required_env_json</th><th>actif</th><th>fichier</th><th>actions</th></tr></thead><tbody><?php foreach($rows as $r): $found=is_file(script_abs((string)$r['file_name'])); ?><tr><td><strong><?= h($r['script_name']) ?></strong></td><td><code><?= h($r['file_name']) ?></code></td><td><?= h($r['description']) ?></td><td><pre><?= h((string)$r['required_env_json']) ?></pre></td><td><span class="status <?= ((bool)$r['is_active'])?'up':'warn' ?>"><?= ((bool)$r['is_active'])?'YES':'NO' ?></span></td><td><span class="status <?= $found?'up':'down' ?>"><?= $found?'TROUVÉ':'MANQUANT' ?></span></td><td><div class="actions"><form method="post"><?= jarvis_csrf_input() ?><input type="hidden" name="form_action" value="toggle"><input type="hidden" name="script_name" value="<?= h($r['script_name']) ?>"><button class="ghost-btn" type="submit"><?= ((bool)$r['is_active'])?'Désactiver':'Activer' ?></button></form><form method="post"><?= jarvis_csrf_input() ?><input type="hidden" name="form_action" value="delete"><input type="hidden" name="script_name" value="<?= h($r['script_name']) ?>"><button class="danger-btn" type="submit" data-confirm="Supprimer <?= h($r['script_name']) ?> ?">Supprimer</button></form></div></td></tr><?php endforeach; ?></tbody></table></div>
+  <div class="notice">
+    Cette page ne cree plus les scripts a la main. Elle lit l inventaire publie par les scripts,
+    puis synchronise la DB via <code>jarvis-script-registry.sh</code>.
+  </div>
+
+  <?php if ($msg !== ''): ?>
+    <?= jarvis_render_notice(h($msg), $type) ?>
+  <?php endif; ?>
+
+  <?php if (!registry_script_available()): ?>
+    <?= jarvis_render_notice('Le script <code>jarvis-script-registry.sh</code> est introuvable dans <code>/var/www/data/scripts</code>. Copie-le d abord sur la cible Linux.', 'error') ?>
+  <?php endif; ?>
+
   <div class="two">
-    <div class="card"><h3>Scripts présents sur disque mais absents de la DB</h3><?php if(!$missing): ?><p class="small">Aucun fichier orphelin détecté.</p><?php else: ?><table><thead><tr><th>fichier</th><th>action</th></tr></thead><tbody><?php foreach($missing as $f): ?><tr><td><code><?= h($f) ?></code></td><td><button class="ghost-btn" type="button" data-prefill-script="<?= h($f) ?>">Préremplir</button></td></tr><?php endforeach; ?></tbody></table><?php endif; ?></div>
-    <div class="card"><h3>Ajouter un script</h3><form method="post"><?= jarvis_csrf_input() ?><input type="hidden" name="form_action" value="add"><p><label>script_name</label><input id="script_name" name="script_name" type="text" placeholder="mon-import.sh"></p><p><label>file_name</label><input id="file_name" name="file_name" type="text" placeholder="import/mon-import.sh"></p><p><label>description</label><input name="description" type="text" placeholder="Description lisible du script"></p><p><label>required_env_json</label><textarea name="required_env_json">[]</textarea></p><p><label><input type="checkbox" name="is_active" value="1" checked> Actif</label></p><div class="actions"><button class="primary-btn" type="submit">Ajouter</button></div></form></div>
+    <div class="card">
+      <h3>Synchronisation DB</h3>
+      <p class="small">
+        Le dry-run compare le disque et la DB sans ecriture.
+        La synchronisation applique insertions, mises a jour, et desactivation optionnelle.
+      </p>
+      <form method="post">
+        <?= jarvis_csrf_input() ?>
+        <p><label><input type="checkbox" name="disable_missing" value="1"> Desactiver en DB les scripts absents du disque</label></p>
+        <div class="actions">
+          <button class="secondary-btn" type="submit" name="form_action" value="sync_preview">Dry-run sync</button>
+          <button class="primary-btn" type="submit" name="form_action" value="sync_apply" data-confirm="Appliquer la synchronisation de la registry ?">Synchroniser la DB</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Resume</h3>
+      <div class="grid">
+        <div class="kpi"><div class="label">DB</div><div class="value"><?= h(count($rows)) ?></div></div>
+        <div class="kpi"><div class="label">Compatibles</div><div class="value"><?= h(count($compatibleScripts)) ?></div></div>
+        <div class="kpi"><div class="label">Incompatibles</div><div class="value"><?= h(count($incompatibleScripts)) ?></div></div>
+      </div>
+      <?php if ($scanPayload !== null): ?>
+        <p class="small"><?= h((string) ($scanPayload['summary'] ?? '')) ?></p>
+      <?php elseif ($scanError !== null): ?>
+        <p class="small"><?= h($scanError) ?></p>
+      <?php endif; ?>
+    </div>
+  </div>
+
+  <?php if (is_array($syncResult)): ?>
+    <div class="card">
+      <h3>Resultat sync</h3>
+      <pre><?= h(json_encode($syncResult, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) ?></pre>
+    </div>
+  <?php endif; ?>
+
+  <div class="card">
+    <h3>Scripts en DB</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>script_name</th>
+          <th>file_name</th>
+          <th>description</th>
+          <th>required_env_json</th>
+          <th>actif</th>
+          <th>fichier</th>
+          <th>actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($rows as $row): ?>
+          <?php $found = is_file(script_abs((string) $row['file_name'])); ?>
+          <tr>
+            <td><strong><?= h((string) $row['script_name']) ?></strong></td>
+            <td><code><?= h((string) $row['file_name']) ?></code></td>
+            <td><?= h((string) $row['description']) ?></td>
+            <td><pre><?= h((string) $row['required_env_json']) ?></pre></td>
+            <td><span class="status <?= ((bool) $row['is_active']) ? 'up' : 'warn' ?>"><?= ((bool) $row['is_active']) ? 'YES' : 'NO' ?></span></td>
+            <td><span class="status <?= $found ? 'up' : 'down' ?>"><?= $found ? 'TROUVE' : 'MANQUANT' ?></span></td>
+            <td>
+              <div class="actions">
+                <form method="post">
+                  <?= jarvis_csrf_input() ?>
+                  <input type="hidden" name="form_action" value="toggle">
+                  <input type="hidden" name="script_name" value="<?= h((string) $row['script_name']) ?>">
+                  <button class="ghost-btn" type="submit"><?= ((bool) $row['is_active']) ? 'Desactiver' : 'Activer' ?></button>
+                </form>
+                <form method="post">
+                  <?= jarvis_csrf_input() ?>
+                  <input type="hidden" name="form_action" value="delete">
+                  <input type="hidden" name="script_name" value="<?= h((string) $row['script_name']) ?>">
+                  <button class="danger-btn" type="submit" data-confirm="Supprimer <?= h((string) $row['script_name']) ?> ?">Supprimer</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Scripts detectes sur disque</h3>
+    <?php if ($scanError !== null): ?>
+      <?= jarvis_render_notice('<pre>' . h($scanError) . '</pre>', 'error') ?>
+    <?php elseif (!$discoveredScripts): ?>
+      <p class="small">Aucun script detecte.</p>
+    <?php else: ?>
+      <table>
+        <thead>
+          <tr>
+            <th>file_name</th>
+            <th>script_name</th>
+            <th>etat registry</th>
+            <th>description</th>
+            <th>required_env</th>
+            <th>services</th>
+            <th>erreur</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($discoveredScripts as $script): ?>
+            <?php
+            $metadata = is_array($script['metadata'] ?? null) ? $script['metadata'] : [];
+            $scriptName = (string) ($metadata['script_name'] ?? '');
+            $dbState = $scriptName !== '' && isset($dbByScriptName[$scriptName]) ? 'EN DB' : 'HORS DB';
+            $requiredEnv = is_array($metadata['required_env'] ?? null) ? $metadata['required_env'] : [];
+            $services = is_array($metadata['services'] ?? null) ? $metadata['services'] : [];
+            ?>
+            <tr>
+              <td><code><?= h((string) ($script['file_name'] ?? '')) ?></code></td>
+              <td><?= h($scriptName !== '' ? $scriptName : '-') ?></td>
+              <td>
+                <span class="status <?= !empty($script['registry_compatible']) ? 'up' : 'down' ?>">
+                  <?= !empty($script['registry_compatible']) ? h($dbState) : 'INCOMPATIBLE' ?>
+                </span>
+              </td>
+              <td><?= h((string) ($metadata['description'] ?? '')) ?></td>
+              <td><?= h((string) count($requiredEnv)) ?></td>
+              <td><?= h((string) count($services)) ?></td>
+              <td><pre><?= h((string) ($script['error'] ?? '')) ?></pre></td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    <?php endif; ?>
   </div>
 </div>

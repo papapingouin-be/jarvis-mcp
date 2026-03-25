@@ -1,7 +1,7 @@
 const meta = {
   overview: ["Vue d'ensemble", "Console admin MCP et runtime"],
-  scripts_admin: ["Gestion scripts", "CRUD registry, scan disque, coherence DB"],
-  scripts_test: ["Test scripts MCP", "Pre-check, simulation et execution"],
+  scripts_admin: ["Gestion scripts", "Discovery script 0, sync DB et coherence registry"],
+  scripts_test: ["Test scripts MCP", "Services publies, pre-check, simulation et execution"],
   scripts_catalog: ["Catalogue MCP", "Vue des scripts et des descriptions"],
   maintenance: ["Scripts disque", "Inventaire des fichiers scripts"],
   sql: ["SQL runner", "Fichiers SQL et requetes manuelles"],

@@ -289,13 +289,76 @@ function validate_required_env_json(string $json): array
         throw new RuntimeException('required_env_json doit etre un tableau JSON.');
     }
 
+    $normalized = [];
+
     foreach ($decoded as $value) {
-        if (!is_string($value) || $value === '') {
-            throw new RuntimeException('required_env_json doit contenir des chaines non vides.');
+        if (is_string($value)) {
+            $name = trim($value);
+            if ($name === '') {
+                throw new RuntimeException('required_env_json contient un nom vide.');
+            }
+
+            $normalized[] = [
+                'name' => $name,
+                'required' => true,
+                'secret' => false,
+                'description' => '',
+            ];
+            continue;
         }
+
+        if (!is_array($value)) {
+            throw new RuntimeException('required_env_json doit contenir des chaines ou objets valides.');
+        }
+
+        $name = trim((string) ($value['name'] ?? ''));
+        if ($name === '') {
+            throw new RuntimeException('required_env_json.name est obligatoire.');
+        }
+
+        $normalized[] = [
+            'name' => $name,
+            'required' => array_key_exists('required', $value) ? (bool) $value['required'] : true,
+            'secret' => array_key_exists('secret', $value) ? (bool) $value['secret'] : false,
+            'description' => trim((string) ($value['description'] ?? '')),
+        ];
     }
 
-    return array_values($decoded);
+    return $normalized;
+}
+
+function required_env_definitions(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    return validate_required_env_json(json_encode($value, JSON_UNESCAPED_SLASHES));
+}
+
+function required_env_names(array $definitions, bool $requiredOnly = true): array
+{
+    $names = [];
+
+    foreach ($definitions as $definition) {
+        if (!is_array($definition)) {
+            continue;
+        }
+
+        $name = trim((string) ($definition['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+
+        $required = !array_key_exists('required', $definition) || (bool) $definition['required'];
+        if ($requiredOnly && !$required) {
+            continue;
+        }
+
+        $names[] = $name;
+    }
+
+    return array_values(array_unique($names));
 }
 
 function validate_params_json(string $json): array
@@ -513,6 +576,104 @@ function registry_delete(PDO $pdo, string $name): void
     $statement->execute(['n' => $name]);
 }
 
+function registry_script_file_name(): string
+{
+    return 'jarvis-script-registry.sh';
+}
+
+function registry_runner_params(): array
+{
+    $params = [
+        'mode' => '',
+        'scripts_root' => scripts_root(),
+        'db_host' => env_value('JARVIS_PG_HOST') ?: 'jarvis_postgres',
+        'db_port' => env_value('JARVIS_PG_PORT') ?: '5432',
+        'db_name' => env_value('JARVIS_PG_DB') ?: 'jarvis_memory',
+        'db_user' => env_value('JARVIS_PG_USER') ?: 'n8n',
+        'db_password' => env_value('JARVIS_PG_PASSWORD') ?: '',
+    ];
+
+    return $params;
+}
+
+function registry_script_available(): bool
+{
+    return is_file(script_abs(registry_script_file_name()));
+}
+
+function run_script_process(string $command, array $scriptEnv): array
+{
+    $env = array_merge(env_all(), $scriptEnv);
+    $spec = [
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $process = proc_open($command, $spec, $pipes, null, $env);
+
+    if (!is_resource($process)) {
+        throw new RuntimeException('Impossible de demarrer le script.');
+    }
+
+    $stdout = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    return [
+        'stdout' => trim((string) $stdout),
+        'stderr' => trim((string) $stderr),
+        'exit_code' => $exitCode,
+    ];
+}
+
+function build_cmd_from_file(string $fileName, string $phase, bool $confirmed, array $params): string
+{
+    $parts = [
+        'bash',
+        escapeshellarg(script_abs($fileName)),
+        '--phase',
+        escapeshellarg($phase),
+        '--confirmed',
+        escapeshellarg($confirmed ? 'true' : 'false'),
+    ];
+
+    foreach ($params as $key => $value) {
+        $parts[] = '--param';
+        $parts[] = escapeshellarg((string) $key . '=' . (string) $value);
+    }
+
+    return implode(' ', $parts);
+}
+
+function registry_run_json(string $mode, string $phase = 'collect', bool $confirmed = false, array $params = []): array
+{
+    if (!registry_script_available()) {
+        throw new RuntimeException('Le script jarvis-script-registry.sh est introuvable dans /var/www/data/scripts.');
+    }
+
+    $runnerParams = registry_runner_params();
+    $runnerParams['mode'] = $mode;
+
+    foreach ($params as $key => $value) {
+        $runnerParams[$key] = $value;
+    }
+
+    $command = build_cmd_from_file(registry_script_file_name(), $phase, $confirmed, $runnerParams);
+    $result = run_script_process($command, []);
+
+    if ($result['exit_code'] !== 0) {
+        throw new RuntimeException("Le registry script a echoue.\n" . trim($result['stdout'] . "\n" . $result['stderr']));
+    }
+
+    $decoded = json_decode($result['stdout'], true);
+    if (!is_array($decoded)) {
+        throw new RuntimeException('Le registry script n a pas retourne un JSON valide.');
+    }
+
+    return $decoded;
+}
+
 function scan_scripts(): array
 {
     $root = scripts_root();
@@ -553,10 +714,8 @@ function precheck(PDO $pdo, string $scriptName): array
         throw new RuntimeException('Script introuvable dans la registry.');
     }
 
-    $requiredEnv = json_decode((string) $row['required_env_json'], true);
-    if (!is_array($requiredEnv)) {
-        $requiredEnv = [];
-    }
+    $requiredEnvDefinitions = required_env_definitions(json_decode((string) $row['required_env_json'], true));
+    $requiredEnv = required_env_names($requiredEnvDefinitions, true);
 
     $scriptEnv = script_env_values($pdo, $scriptName);
     $missing = [];
@@ -577,6 +736,7 @@ function precheck(PDO $pdo, string $scriptName): array
         'active' => $active,
         'file_found' => $fileFound,
         'required_env' => $requiredEnv,
+        'required_env_definitions' => $requiredEnvDefinitions,
         'script_env' => $scriptEnv,
         'script_env_count' => count($scriptEnv),
     ];
@@ -584,48 +744,21 @@ function precheck(PDO $pdo, string $scriptName): array
 
 function build_cmd(string $fileName, string $phase, bool $confirmed, array $params): string
 {
-    $parts = [
-        'bash',
-        escapeshellarg(script_abs($fileName)),
-        '--phase',
-        escapeshellarg($phase),
-        '--confirmed',
-        escapeshellarg($confirmed ? 'true' : 'false'),
-    ];
-
-    foreach ($params as $key => $value) {
-        $parts[] = '--param';
-        $parts[] = escapeshellarg((string) $key . '=' . (string) $value);
-    }
-
-    return implode(' ', $parts);
+    return build_cmd_from_file($fileName, $phase, $confirmed, $params);
 }
 
 function run_script_command(string $command, array $scriptEnv): string
 {
-    $env = array_merge(env_all(), $scriptEnv);
-    $spec = [
-        1 => ['pipe', 'w'],
-        2 => ['pipe', 'w'],
-    ];
-    $process = proc_open($command, $spec, $pipes, null, $env);
+    $result = run_script_process($command, $scriptEnv);
 
-    if (!is_resource($process)) {
-        throw new RuntimeException('Impossible de demarrer le script.');
+    if ((int) $result['exit_code'] !== 0) {
+        throw new RuntimeException(
+            "Le script a echoue avec le code " . (int) $result['exit_code'] . ".\n"
+            . trim((string) $result['stdout'] . "\n" . (string) $result['stderr'])
+        );
     }
 
-    $stdout = stream_get_contents($pipes[1]);
-    fclose($pipes[1]);
-    $stderr = stream_get_contents($pipes[2]);
-    fclose($pipes[2]);
-    $exitCode = proc_close($process);
-    $output = (string) $stdout . (string) $stderr;
-
-    if ($exitCode !== 0) {
-        throw new RuntimeException("Le script a echoue avec le code $exitCode.\n" . $output);
-    }
-
-    return $output;
+    return (string) $result['stdout'];
 }
 
 function services_default(): array

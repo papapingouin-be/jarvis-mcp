@@ -102,6 +102,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_GET['action'] ?? '') ==
             throw new RuntimeException('script_name et service sont obligatoires.');
         }
 
+        if (!isset($knownParams['mode'])) {
+            $knownParams['mode'] = $service;
+        }
+
         echo json_encode([
             'ok' => true,
             'validation' => script_service_validate($pdo, $name, $service, $knownParams),
@@ -146,29 +150,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         jarvis_check_csrf();
         $name = trim((string) ($_POST['script_name'] ?? ''));
-        $phase = trim((string) ($_POST['phase'] ?? 'check'));
+        $selectedService = trim((string) ($_POST['service_name'] ?? ''));
+        $requestedPhase = trim((string) ($_POST['phase'] ?? 'collect'));
+        $executionMode = trim((string) ($_POST['mode'] ?? 'precheck'));
         $confirmed = ((string) ($_POST['confirmed'] ?? 'false') === 'true');
-        $mode = trim((string) ($_POST['mode'] ?? 'precheck'));
         $params = validate_params_json((string) ($_POST['params_json'] ?? '{}'));
 
         if ($name === '') {
             throw new RuntimeException('script_name obligatoire.');
         }
 
+        $serviceInfo = [];
+        if ($selectedService !== '') {
+            $serviceInfo = script_service_info($pdo, $name, $selectedService);
+            if (!isset($params['mode'])) {
+                $params['mode'] = $selectedService;
+            }
+        }
+
+        $effectivePhase = trim((string) ($serviceInfo['phase'] ?? $requestedPhase));
+        if ($effectivePhase === '') {
+            $effectivePhase = 'collect';
+        }
+
         $pc = precheck($pdo, $name);
         $row = $pc['row'];
-        $cmd = build_cmd((string) $row['file_name'], $phase, $confirmed, $params);
+        $cmd = build_cmd((string) $row['file_name'], $effectivePhase, $confirmed, $params);
+
+        $serviceValidation = [];
+        if ($selectedService !== '') {
+            $serviceValidation = script_service_validate($pdo, $name, $selectedService, $params);
+        }
 
         echo '<div class="card"><h3>Pre-check</h3><table><thead><tr><th>point</th><th>etat</th><th>detail</th></tr></thead><tbody>';
-        echo '<tr><td>script en DB</td><td><span class="status up">OK</span></td><td><code>' . h($row['script_name']) . '</code></td></tr>';
+        echo '<tr><td>script en DB</td><td><span class="status up">OK</span></td><td><code>' . h((string) $row['script_name']) . '</code></td></tr>';
+        echo '<tr><td>service choisi</td><td><span class="status ' . ($selectedService !== '' ? 'up' : 'warn') . '">' . ($selectedService !== '' ? 'OUI' : 'NON') . '</span></td><td>' . h($selectedService !== '' ? $selectedService : 'Aucun service explicite') . '</td></tr>';
+        echo '<tr><td>phase effective</td><td><span class="status up">OK</span></td><td><code>' . h($effectivePhase) . '</code></td></tr>';
         echo '<tr><td>actif</td><td><span class="status ' . ($pc['active'] ? 'up' : 'warn') . '">' . ($pc['active'] ? 'YES' : 'NO') . '</span></td><td>' . h((string) $row['is_active']) . '</td></tr>';
         echo '<tr><td>fichier present</td><td><span class="status ' . ($pc['file_found'] ? 'up' : 'down') . '">' . ($pc['file_found'] ? 'YES' : 'NO') . '</span></td><td><code>' . h((string) $row['file_name']) . '</code></td></tr>';
         echo '<tr><td>config DB scripts</td><td><span class="status ' . ($pc['script_env_count'] > 0 ? 'up' : 'warn') . '">' . h((string) $pc['script_env_count']) . '</span></td><td>' . ($pc['script_env_count'] > 0 ? h(implode(', ', array_keys($pc['script_env']))) : 'Aucune variable chargee depuis jarvis_script_env_values') . '</td></tr>';
         echo '<tr><td>variables requises</td><td><span class="status ' . (count($pc['missing']) === 0 ? 'up' : 'warn') . '">' . (count($pc['missing']) === 0 ? 'OK' : 'MANQUANTES') . '</span></td><td>' . (count($pc['missing']) === 0 ? 'Toutes presentes en DB' : h(implode(', ', $pc['missing']))) . '</td></tr>';
         echo '</tbody></table></div>';
+
+        if ($selectedService !== '') {
+            $missingRequired = is_array($serviceValidation['missing_required'] ?? null) ? $serviceValidation['missing_required'] : [];
+            $ready = !empty($serviceValidation['ready']);
+
+            echo '<div class="card"><h3>Validation du service</h3>';
+            echo '<p class="small">Validation publiee par le script lui-meme avant execution.</p>';
+            echo '<p><strong>Service</strong> : <code>' . h($selectedService) . '</code></p>';
+            echo '<p><strong>Summary</strong> : ' . h((string) ($serviceValidation['summary'] ?? '')) . '</p>';
+            echo '<p><strong>Ready</strong> : <span class="status ' . ($ready ? 'up' : 'warn') . '">' . ($ready ? 'YES' : 'NO') . '</span></p>';
+            echo '<p><strong>Champs requis manquants</strong></p><pre>' . h(json_encode($missingRequired, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) . '</pre>';
+            echo '</div>';
+        }
+
         echo '<div class="card"><h3>Commande simulee</h3><pre>' . h($cmd) . '</pre><p class="small">Les variables de script sont injectees depuis la DB au moment de l execution.</p></div>';
 
-        if ($mode === 'precheck') {
+        if ($executionMode === 'precheck') {
             echo jarvis_render_notice('Pre-check termine. Rien n a ete execute.', 'info');
             exit;
         }
@@ -185,12 +224,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Variables manquantes en base : ' . implode(', ', $pc['missing']));
         }
 
-        if ($mode === 'simulate') {
+        if ($selectedService !== '' && !empty($serviceValidation) && empty($serviceValidation['ready'])) {
+            $missingRequired = is_array($serviceValidation['missing_required'] ?? null) ? $serviceValidation['missing_required'] : [];
+            throw new RuntimeException('Le service selectionne n est pas pret. Champs manquants : ' . implode(', ', $missingRequired));
+        }
+
+        if ($executionMode === 'simulate') {
             echo jarvis_render_notice('Simulation OK. Rien n a ete execute.', 'success');
             exit;
         }
 
-        if ($mode !== 'execute') {
+        if ($executionMode !== 'execute') {
             throw new RuntimeException('Mode inconnu.');
         }
 
@@ -206,7 +250,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $rows = registry_all($pdo);
 ?>
-<div class="stack"><div class="notice">Parcours recommande : <strong>1. choisir un script</strong>, <strong>2. voir les actions possibles</strong>, <strong>3. voir les infos necessaires</strong>, <strong>4. verifier les infos deja connues</strong>, <strong>5. lancer un test</strong>.</div><div class="two"><div class="card"><h3>Parametres de test</h3><form id="scripts-test-form" method="post"><?= jarvis_csrf_input() ?><p><label>Script</label><select id="scripts-test-script-name" name="script_name"><option value="">-- Choisir un script --</option><?php foreach($rows as $r): ?><option value="<?= h($r['script_name']) ?>"><?= h($r['script_name']) ?> - <?= h($r['description']) ?></option><?php endforeach; ?></select></p><p><label>Action / service propose par le script</label><select id="scripts-test-service-name" name="service_name"><option value="">-- Choisir un service --</option></select><span id="scripts-test-service-status" class="small">Choisis un script pour charger ses services.</span></p><p><label>Phase MCP utilisee</label><input id="scripts-test-phase-display" type="text" value="" readonly><input id="scripts-test-phase" type="hidden" name="phase" value="collect"></p><p><label>Confirmed</label><select id="scripts-test-confirmed" name="confirmed"><option value="false">false</option><option value="true">true</option></select><span class="small">Renseigne automatiquement depuis le service quand disponible.</span></p><p><label>Mode du test</label><select name="mode"><option value="precheck">Pre-check</option><option value="simulate">Simulation</option><option value="execute">Execution reelle</option></select></p><p><label>params JSON</label><textarea id="scripts-test-params-json" name="params_json">{}</textarea></p><div class="actions"><button class="secondary-btn" id="scripts-test-service-info-btn" type="button">Infos du service</button><button class="secondary-btn" id="scripts-test-validate-btn" type="button">Verifier infos connues</button><button class="secondary-btn" id="scripts-test-example-btn" type="button">Exemple params JSON</button><button class="primary-btn" type="submit">Lancer le test</button></div></form></div><div class="card"><h3>Convention supportee</h3><pre>bash /var/www/data/scripts/&lt;fichier&gt;
-  --phase &lt;phase&gt;
+<div class="stack"><div class="notice">Parcours recommande : <strong>1. choisir un script</strong>, <strong>2. choisir un service</strong>, <strong>3. verifier les champs connus</strong>, <strong>4. lancer un pre-check</strong>, <strong>5. executer si tout est vert</strong>.</div><div class="two"><div class="card"><h3>Parametres de test</h3><form id="scripts-test-form" method="post"><?= jarvis_csrf_input() ?><p><label>Script</label><select id="scripts-test-script-name" name="script_name"><option value="">-- Choisir un script --</option><?php foreach($rows as $r): ?><option value="<?= h((string) $r['script_name']) ?>"><?= h((string) $r['script_name']) ?> - <?= h((string) $r['description']) ?></option><?php endforeach; ?></select></p><p><label>Action / service propose par le script</label><select id="scripts-test-service-name" name="service_name"><option value="">-- Choisir un service --</option></select><span id="scripts-test-service-status" class="small">Choisis un script pour charger ses services.</span></p><p><label>Phase MCP utilisee</label><input id="scripts-test-phase-display" type="text" value="" readonly><input id="scripts-test-phase" type="hidden" name="phase" value="collect"></p><p><label>Confirmed</label><select id="scripts-test-confirmed" name="confirmed"><option value="false">false</option><option value="true">true</option></select><span class="small">Renseigne automatiquement depuis le service quand disponible.</span></p><p><label>Mode du test</label><select name="mode"><option value="precheck">Pre-check</option><option value="simulate">Simulation</option><option value="execute">Execution reelle</option></select></p><p><label>params JSON</label><textarea id="scripts-test-params-json" name="params_json">{}</textarea></p><div class="actions"><button class="secondary-btn" id="scripts-test-service-info-btn" type="button">Infos du service</button><button class="secondary-btn" id="scripts-test-validate-btn" type="button">Verifier infos connues</button><button class="secondary-btn" id="scripts-test-example-btn" type="button">Exemple params JSON</button><button class="primary-btn" type="submit">Lancer le test</button></div></form></div><div class="card"><h3>Convention supportee</h3><pre>bash /var/www/data/scripts/&lt;fichier&gt;
+  --phase &lt;collect|execute&gt;
   --confirmed &lt;true|false&gt;
-  --param key=value</pre><p class="small">Le runner PHP injecte les variables requises depuis <code>jarvis_script_env_values</code>.</p><p class="small"><strong>Phases MCP:</strong> <code>collect</code> et <code>execute</code>.</p><p class="small">Les actions, les details d action, les exemples JSON et la validation des champs connus proviennent du script lorsqu il publie ces metadonnees.</p></div></div><div id="scripts-test-help" class="card"><h3>Phases et modes</h3><p class="small">Choisis un script pour afficher ses phases MCP et ses modes utiles.</p></div><div id="scripts-test-result" class="card"><h3>Resultat</h3><p class="small">Le resultat du test apparaitra ici.</p></div></div>
+  --param key=value</pre><p class="small">Le runner PHP injecte les variables de script depuis <code>jarvis_script_env_values</code> et ajoute automatiquement <code>mode=&lt;service&gt;</code> quand un service est selectionne.</p><p class="small">Les actions, les details d action, les exemples JSON et la validation des champs connus proviennent du script lorsqu il publie ces metadonnees.</p></div></div><div id="scripts-test-help" class="card"><h3>Phases et modes</h3><p class="small">Choisis un script pour afficher ses phases MCP et ses modes utiles.</p></div><div id="scripts-test-result" class="card"><h3>Resultat</h3><p class="small">Le resultat du test apparaitra ici.</p></div></div>
