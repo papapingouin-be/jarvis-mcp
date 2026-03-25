@@ -231,6 +231,31 @@ function setButtonBusy(button, busyLabel) {
   };
 }
 
+function setServiceUiState({
+  serviceSelect,
+  serviceStatus,
+  serviceInfoButton,
+  validateButton,
+  enabled,
+  statusText,
+}) {
+  if (serviceSelect) {
+    serviceSelect.disabled = !enabled;
+  }
+
+  if (serviceInfoButton) {
+    serviceInfoButton.disabled = !enabled;
+  }
+
+  if (validateButton) {
+    validateButton.disabled = !enabled;
+  }
+
+  if (serviceStatus) {
+    serviceStatus.textContent = statusText;
+  }
+}
+
 async function refreshScriptsTestHelp() {
   const scriptName = document.getElementById("scripts-test-script-name")?.value || "";
   const helpContainer = document.getElementById("scripts-test-help");
@@ -261,18 +286,37 @@ async function loadScriptServices() {
   const scriptName = document.getElementById("scripts-test-script-name")?.value || "";
   const serviceSelect = document.getElementById("scripts-test-service-name");
   const result = document.getElementById("scripts-test-result");
+  const serviceStatus = document.getElementById("scripts-test-service-status");
+  const serviceInfoButton = document.getElementById("scripts-test-service-info-btn");
+  const validateButton = document.getElementById("scripts-test-validate-btn");
 
   if (!serviceSelect) {
     return;
   }
 
   serviceSelect.innerHTML = '<option value="">-- Choisir un service --</option>';
+  setServiceUiState({
+    serviceSelect,
+    serviceStatus,
+    serviceInfoButton,
+    validateButton,
+    enabled: false,
+    statusText: "Choisis un script pour charger ses services.",
+  });
 
   if (scriptName.trim() === "") {
     return;
   }
 
   setResultLoading(result, "Services", "Chargement des services exposes par le script...");
+  setServiceUiState({
+    serviceSelect,
+    serviceStatus,
+    serviceInfoButton,
+    validateButton,
+    enabled: false,
+    statusText: "Chargement des services...",
+  });
 
   const response = await fetch(
     `api/scripts_test.php?action=service_catalog&script_name=${encodeURIComponent(scriptName)}`
@@ -281,11 +325,27 @@ async function loadScriptServices() {
 
   if (!payload.ok || !Array.isArray(payload.services)) {
     result.innerHTML = `<div class="notice error"><pre>${payload.message || "Impossible de charger les services."}</pre></div>`;
+    setServiceUiState({
+      serviceSelect,
+      serviceStatus,
+      serviceInfoButton,
+      validateButton,
+      enabled: false,
+      statusText: "Chargement impossible pour ce script.",
+    });
     return;
   }
 
   if (payload.services.length === 0) {
     result.innerHTML = '<div class="notice warning">Ce script ne publie aucun service exploitable dans cette vue.</div>';
+    setServiceUiState({
+      serviceSelect,
+      serviceStatus,
+      serviceInfoButton,
+      validateButton,
+      enabled: false,
+      statusText: "Aucun service disponible pour ce script dans cette vue.",
+    });
     return;
   }
 
@@ -296,6 +356,14 @@ async function loadScriptServices() {
     serviceSelect.appendChild(option);
   });
 
+  setServiceUiState({
+    serviceSelect,
+    serviceStatus,
+    serviceInfoButton,
+    validateButton,
+    enabled: true,
+    statusText: `${payload.services.length} service(s) disponibles. Choisis-en un pour afficher son detail.`,
+  });
   result.innerHTML = `<div class="notice success">${payload.services.length} service(s) charges. Choisis un service puis clique sur <strong>Infos du service</strong>.</div>`;
 }
 
