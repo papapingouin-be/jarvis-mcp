@@ -157,6 +157,49 @@ function renderScriptHelp(help) {
   `;
 }
 
+function renderServiceInfo(service) {
+  const required = Array.isArray(service.required_params)
+    ? service.required_params.map((value) => `<li><code>${value}</code></li>`).join("")
+    : "";
+  const optional = Array.isArray(service.optional_params)
+    ? service.optional_params.map((value) => `<li><code>${value}</code></li>`).join("")
+    : "";
+
+  return `
+    <div class="notice info">
+      <strong>${service.name}</strong> - ${service.description || ""}
+    </div>
+    <p class="small">Phase recommandee: <code>${service.phase || ""}</code> | confirmed requis: <code>${String(service.confirmed_required)}</code></p>
+    <p class="small"><strong>Champs requis</strong></p>
+    <ul>${required || "<li>Aucun</li>"}</ul>
+    <p class="small"><strong>Champs optionnels</strong></p>
+    <ul>${optional || "<li>Aucun</li>"}</ul>
+    <p class="small"><strong>Defaults</strong></p>
+    <pre>${JSON.stringify(service.defaults || {}, null, 2)}</pre>
+    <p class="small"><strong>Exemple params JSON</strong></p>
+    <pre>${JSON.stringify(service.example_params || {}, null, 2)}</pre>
+  `;
+}
+
+function renderValidation(validation) {
+  const known = validation.known || {};
+  const missingRequired = Array.isArray(validation.missing_required) ? validation.missing_required : [];
+  const optionalMissing = Array.isArray(validation.optional_missing) ? validation.optional_missing : [];
+
+  return `
+    <div class="notice ${validation.ready ? "success" : "warning"}">
+      <strong>${validation.service}</strong> - ${validation.summary}
+    </div>
+    <p class="small">Phase recommandee: <code>${validation.phase || ""}</code> | confirmed requis: <code>${String(validation.confirmed_required)}</code></p>
+    <p class="small"><strong>Connu</strong></p>
+    <pre>${JSON.stringify(known, null, 2)}</pre>
+    <p class="small"><strong>Champs requis manquants</strong></p>
+    <ul>${missingRequired.length ? missingRequired.map((value) => `<li><code>${value}</code></li>`).join("") : "<li>Aucun</li>"}</ul>
+    <p class="small"><strong>Champs optionnels manquants</strong></p>
+    <ul>${optionalMissing.length ? optionalMissing.map((value) => `<li><code>${value}</code></li>`).join("") : "<li>Aucun</li>"}</ul>
+  `;
+}
+
 async function refreshScriptsTestHelp() {
   const scriptName = document.getElementById("scripts-test-script-name")?.value || "";
   const helpContainer = document.getElementById("scripts-test-help");
@@ -183,6 +226,37 @@ async function refreshScriptsTestHelp() {
   helpContainer.innerHTML = `<h3>Phases et modes</h3>${renderScriptHelp(payload.help)}`;
 }
 
+async function loadScriptServices() {
+  const scriptName = document.getElementById("scripts-test-script-name")?.value || "";
+  const serviceSelect = document.getElementById("scripts-test-service-name");
+
+  if (!serviceSelect) {
+    return;
+  }
+
+  serviceSelect.innerHTML = '<option value="">-- Choisir un service --</option>';
+
+  if (scriptName.trim() === "") {
+    return;
+  }
+
+  const response = await fetch(
+    `api/scripts_test.php?action=service_catalog&script_name=${encodeURIComponent(scriptName)}`
+  );
+  const payload = await response.json();
+
+  if (!payload.ok || !Array.isArray(payload.services)) {
+    return;
+  }
+
+  payload.services.forEach((service) => {
+    const option = document.createElement("option");
+    option.value = service.name || "";
+    option.textContent = `${service.name || ""} - phase ${service.phase || "?"}`;
+    serviceSelect.appendChild(option);
+  });
+}
+
 function bindScriptsTestForm() {
   const testForm = document.getElementById("scripts-test-form");
   if (!testForm) {
@@ -201,12 +275,19 @@ function bindScriptsTestForm() {
   };
 
   const exampleButton = document.getElementById("scripts-test-example-btn");
+  const serviceInfoButton = document.getElementById("scripts-test-service-info-btn");
+  const validateButton = document.getElementById("scripts-test-validate-btn");
   const scriptNameInput = document.getElementById("scripts-test-script-name");
   const phaseInput = document.getElementById("scripts-test-phase");
+  const serviceInput = document.getElementById("scripts-test-service-name");
+  const confirmedInput = document.getElementById("scripts-test-confirmed");
+  const paramsJsonInput = document.getElementById("scripts-test-params-json");
+  const result = document.getElementById("scripts-test-result");
 
   if (scriptNameInput) {
-    scriptNameInput.onchange = () => {
+    scriptNameInput.onchange = async () => {
       refreshScriptsTestHelp();
+      await loadScriptServices();
     };
   }
 
@@ -217,15 +298,48 @@ function bindScriptsTestForm() {
   }
 
   refreshScriptsTestHelp();
+  loadScriptServices();
+
+  if (serviceInfoButton) {
+    serviceInfoButton.onclick = async () => {
+      const scriptName = scriptNameInput?.value || "";
+      const serviceName = serviceInput?.value || "";
+
+      if (scriptName.trim() === "" || serviceName.trim() === "") {
+        result.innerHTML = '<div class="notice warning">Choisis un script et un service.</div>';
+        return;
+      }
+
+      const response = await fetch(
+        `api/scripts_test.php?action=service_info&script_name=${encodeURIComponent(scriptName)}&service=${encodeURIComponent(serviceName)}`
+      );
+      const payload = await response.json();
+
+      if (!payload.ok) {
+        result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur service_info"}</pre></div>`;
+        return;
+      }
+
+      if (phaseInput && payload.service?.phase) {
+        phaseInput.value = payload.service.phase;
+      }
+
+      if (confirmedInput) {
+        confirmedInput.value = payload.service?.confirmed_required ? "true" : "false";
+      }
+
+      result.innerHTML = `<div class="card"><h3>Infos du service</h3>${renderServiceInfo(payload.service || {})}</div>`;
+    };
+  }
 
   if (!exampleButton) {
     return;
   }
 
   exampleButton.onclick = async () => {
-    const scriptName = document.getElementById("scripts-test-script-name")?.value || "";
-    const phase = document.getElementById("scripts-test-phase")?.value || "collect";
-    const result = document.getElementById("scripts-test-result");
+    const scriptName = scriptNameInput?.value || "";
+    const phase = phaseInput?.value || "collect";
+    const service = serviceInput?.value || "";
 
     if (scriptName.trim() === "") {
       result.innerHTML = '<div class="notice warning">Choisis d abord un script.</div>';
@@ -233,7 +347,7 @@ function bindScriptsTestForm() {
     }
 
     const response = await fetch(
-      `api/scripts_test.php?action=example&script_name=${encodeURIComponent(scriptName)}&phase=${encodeURIComponent(phase)}`
+      `api/scripts_test.php?action=example&script_name=${encodeURIComponent(scriptName)}&phase=${encodeURIComponent(phase)}&service=${encodeURIComponent(service)}`
     );
     const payload = await response.json();
 
@@ -243,19 +357,56 @@ function bindScriptsTestForm() {
     }
 
     const example = payload.example;
-    const paramsJson = document.getElementById("scripts-test-params-json");
-    const confirmed = document.getElementById("scripts-test-confirmed");
 
-    if (paramsJson) {
-      paramsJson.value = example.pretty_params_json || "{}";
+    if (paramsJsonInput) {
+      paramsJsonInput.value = example.pretty_params_json || "{}";
     }
 
-    if (confirmed) {
-      confirmed.value = example.confirmed ? "true" : "false";
+    if (confirmedInput) {
+      confirmedInput.value = example.confirmed ? "true" : "false";
+    }
+
+    if (phaseInput && example.phase) {
+      phaseInput.value = example.phase;
     }
 
     result.innerHTML = `<div class="card"><h3>Exemple params JSON</h3>${renderScriptExample(example)}</div>`;
   };
+
+  if (validateButton) {
+    validateButton.onclick = async () => {
+      const scriptName = scriptNameInput?.value || "";
+      const serviceName = serviceInput?.value || "";
+
+      if (scriptName.trim() === "" || serviceName.trim() === "") {
+        result.innerHTML = '<div class="notice warning">Choisis un script et un service.</div>';
+        return;
+      }
+
+      const body = new URLSearchParams(new FormData(testForm)).toString();
+      const response = await fetch("api/scripts_test.php?action=validate_service", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      const payload = await response.json();
+
+      if (!payload.ok) {
+        result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur validate_service"}</pre></div>`;
+        return;
+      }
+
+      if (phaseInput && payload.validation?.phase) {
+        phaseInput.value = payload.validation.phase;
+      }
+
+      if (confirmedInput) {
+        confirmedInput.value = payload.validation?.confirmed_required ? "true" : "false";
+      }
+
+      result.innerHTML = `<div class="card"><h3>Verification des infos connues</h3>${renderValidation(payload.validation || {})}</div>`;
+    };
+  }
 }
 
 function bind() {

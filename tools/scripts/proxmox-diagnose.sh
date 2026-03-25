@@ -100,6 +100,340 @@ append_bool_flag() {
   fi
 }
 
+is_metadata_mode() {
+  local mode="$1"
+  case "$mode" in
+    list-services|describe-service|validate-service-input)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_phase() {
+  case "$1" in
+    self-doc|diagnose|collect)
+      printf 'collect'
+      ;;
+    preflight-create|create-ct|get-ct-info|stop-ct|destroy-ct|ensure-ct)
+      printf 'execute'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_confirmed_required() {
+  case "$1" in
+    self-doc|diagnose|collect)
+      printf 'false'
+      ;;
+    preflight-create|create-ct|get-ct-info|stop-ct|destroy-ct|ensure-ct)
+      printf 'true'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_description() {
+  case "$1" in
+    self-doc) printf 'Return machine-readable documentation for the script.' ;;
+    diagnose) printf 'Test SSH, remote context, sudo, and Proxmox commands.' ;;
+    collect) printf 'Collect templates, storages, bridges, CTs, VMs, and nextid.' ;;
+    preflight-create) printf 'Validate whether a future CT creation looks ready.' ;;
+    create-ct) printf 'Create and start a CT container.' ;;
+    get-ct-info) printf 'Read status, hostname, config, and IP of a CT.' ;;
+    stop-ct) printf 'Stop an existing CT.' ;;
+    destroy-ct) printf 'Destroy an existing CT.' ;;
+    ensure-ct) printf 'Ensure a CT exists and is running.' ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_required_params() {
+  case "$1" in
+    self-doc)
+      ;;
+    diagnose|collect)
+      printf '%s\n' host user
+      ;;
+    preflight-create)
+      printf '%s\n' host user type template storage bridge vmid hostname
+      ;;
+    create-ct|ensure-ct)
+      printf '%s\n' host user password type template storage bridge vmid hostname
+      ;;
+    get-ct-info|stop-ct|destroy-ct)
+      printf '%s\n' host user vmid
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_optional_params() {
+  case "$1" in
+    self-doc)
+      ;;
+    diagnose|collect)
+      printf '%s\n' password port sudo verbose trace identity_file
+      ;;
+    preflight-create)
+      printf '%s\n' password port sudo verbose trace identity_file cores memory swap disk install_ssh
+      ;;
+    create-ct|ensure-ct)
+      printf '%s\n' port sudo verbose trace identity_file cores memory swap disk install_ssh reconfigure
+      ;;
+    get-ct-info|stop-ct|destroy-ct)
+      printf '%s\n' password port sudo verbose trace identity_file
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_defaults_json() {
+  case "$1" in
+    diagnose|collect)
+      printf '{"port":"22","sudo":true}'
+      ;;
+    preflight-create)
+      printf '{"port":"22","sudo":true,"type":"ct","cores":"2","memory":"2048","disk":"8","install_ssh":true}'
+      ;;
+    create-ct|ensure-ct)
+      printf '{"port":"22","sudo":true,"type":"ct","cores":"2","memory":"2048","swap":"512","disk":"8","install_ssh":true}'
+      ;;
+    get-ct-info|stop-ct|destroy-ct)
+      printf '{"port":"22","sudo":true}'
+      ;;
+    self-doc)
+      printf '{}'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_example_params_json() {
+  case "$1" in
+    self-doc)
+      printf '{"mode":"self-doc"}'
+      ;;
+    diagnose)
+      printf '{"mode":"diagnose","host":"192.168.11.248","user":"root","password":"change-me","sudo":true}'
+      ;;
+    collect)
+      printf '{"mode":"collect","host":"192.168.11.248","user":"root","password":"change-me","sudo":true}'
+      ;;
+    preflight-create)
+      printf '{"mode":"preflight-create","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"type":"ct","template":"debian-12-standard_12.7-1_amd64.tar.zst","storage":"local-lvm","bridge":"vmbr0","vmid":"9100","hostname":"ctdev","cores":"2","memory":"2048","disk":"8","install_ssh":true}'
+      ;;
+    create-ct)
+      printf '{"mode":"create-ct","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"type":"ct","template":"debian-12-standard_12.7-1_amd64.tar.zst","storage":"local-lvm","bridge":"vmbr0","vmid":"9100","hostname":"ctdev","cores":"2","memory":"2048","disk":"8","install_ssh":true}'
+      ;;
+    get-ct-info)
+      printf '{"mode":"get-ct-info","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"vmid":"9100"}'
+      ;;
+    stop-ct)
+      printf '{"mode":"stop-ct","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"vmid":"9100"}'
+      ;;
+    destroy-ct)
+      printf '{"mode":"destroy-ct","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"vmid":"9100"}'
+      ;;
+    ensure-ct)
+      printf '{"mode":"ensure-ct","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"type":"ct","template":"debian-12-standard_12.7-1_amd64.tar.zst","storage":"local-lvm","bridge":"vmbr0","vmid":"9100","hostname":"ctdev","cores":"2","memory":"2048","disk":"8","install_ssh":true}'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+json_array_from_lines() {
+  local lines="$1"
+  local output="["
+  local first=1
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ $first -eq 0 ]]; then
+      output+=","
+    fi
+    output+="\"$(json_escape "$line")\""
+    first=0
+  done <<< "$lines"
+
+  output+="]"
+  printf '%s' "$output"
+}
+
+metadata_services_json() {
+  local services="self-doc
+diagnose
+collect
+preflight-create
+create-ct
+get-ct-info
+stop-ct
+destroy-ct
+ensure-ct"
+  local output="["
+  local first=1
+  local service
+
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue
+    if [[ $first -eq 0 ]]; then
+      output+=","
+    fi
+    output+="$(service_schema_json "$service" short)"
+    first=0
+  done <<< "$services"
+
+  output+="]"
+  printf '%s' "$output"
+}
+
+service_schema_json() {
+  local service="$1"
+  local mode="${2:-full}"
+  local phase description confirmed required_json optional_json defaults_json example_json
+  phase="$(service_phase "$service")" || emit_error "Unknown service" "service=$service"
+  description="$(service_description "$service")"
+  confirmed="$(service_confirmed_required "$service")"
+  required_json="$(json_array_from_lines "$(service_required_params "$service")")"
+  optional_json="$(json_array_from_lines "$(service_optional_params "$service")")"
+  defaults_json="$(service_defaults_json "$service")"
+  example_json="$(service_example_params_json "$service")"
+
+  if [[ "$mode" == "short" ]]; then
+    printf '{"name":"%s","phase":"%s","confirmed_required":%s,"description":"%s"}' \
+      "$(json_escape "$service")" \
+      "$(json_escape "$phase")" \
+      "$confirmed" \
+      "$(json_escape "$description")"
+    return
+  fi
+
+  printf '{"name":"%s","phase":"%s","confirmed_required":%s,"description":"%s","required_params":%s,"optional_params":%s,"defaults":%s,"example_params":%s}' \
+    "$(json_escape "$service")" \
+    "$(json_escape "$phase")" \
+    "$confirmed" \
+    "$(json_escape "$description")" \
+    "$required_json" \
+    "$optional_json" \
+    "$defaults_json" \
+    "$example_json"
+}
+
+validate_service_input_json() {
+  local service="$1"
+  local phase confirmed required_json optional_json defaults_json example_json
+  phase="$(service_phase "$service")" || emit_error "Unknown service" "service=$service"
+  confirmed="$(service_confirmed_required "$service")"
+  required_json="$(json_array_from_lines "$(service_required_params "$service")")"
+  optional_json="$(json_array_from_lines "$(service_optional_params "$service")")"
+  defaults_json="$(service_defaults_json "$service")"
+  example_json="$(service_example_params_json "$service")"
+
+  SERVICE_NAME="$service" \
+  SERVICE_PHASE="$phase" \
+  SERVICE_CONFIRMED="$confirmed" \
+  SERVICE_REQUIRED_JSON="$required_json" \
+  SERVICE_OPTIONAL_JSON="$optional_json" \
+  SERVICE_DEFAULTS_JSON="$defaults_json" \
+  SERVICE_EXAMPLE_JSON="$example_json" \
+  PARAMS_JSON="$(params_json_for_validation)" \
+  python3 - <<'PY'
+import json
+import os
+import sys
+
+service = os.environ["SERVICE_NAME"]
+phase = os.environ["SERVICE_PHASE"]
+confirmed = os.environ["SERVICE_CONFIRMED"].lower() == "true"
+required_params = json.loads(os.environ["SERVICE_REQUIRED_JSON"])
+optional_params = json.loads(os.environ["SERVICE_OPTIONAL_JSON"])
+defaults = json.loads(os.environ["SERVICE_DEFAULTS_JSON"])
+example_params = json.loads(os.environ["SERVICE_EXAMPLE_JSON"])
+params = json.loads(os.environ["PARAMS_JSON"])
+
+ignored = {"mode", "service", "output"}
+known = {k: v for k, v in params.items() if k not in ignored and v not in ("", None)}
+missing_required = [key for key in required_params if key not in known]
+optional_missing = [key for key in optional_params if key not in known]
+
+payload = {
+    "ok": True,
+    "mode": "validate-service-input",
+    "service": service,
+    "phase": phase,
+    "confirmed_required": confirmed,
+    "known": known,
+    "missing_required": missing_required,
+    "optional_missing": optional_missing,
+    "defaults": defaults,
+    "example_params": example_params,
+    "ready": len(missing_required) == 0,
+    "summary": "Service input is complete." if len(missing_required) == 0 else "Service input is missing required fields.",
+}
+sys.stdout.write(json.dumps(payload, separators=(",", ":")))
+PY
+}
+
+params_json_for_validation() {
+  local first=1
+  local output="{"
+  local key value
+
+  for key in "${!PARAMS[@]}"; do
+    value="${PARAMS[$key]}"
+    if [[ $first -eq 0 ]]; then
+      output+=","
+    fi
+    output+="\"$(json_escape "$key")\":\"$(json_escape "$value")\""
+    first=0
+  done
+
+  output+="}"
+  printf '%s' "$output"
+}
+
+handle_metadata_mode() {
+  local mode="$1"
+  local service="${PARAMS[service]:-}"
+
+  case "$mode" in
+    list-services)
+      printf '{"ok":true,"mode":"list-services","services":%s,"summary":"Service catalog returned successfully."}\n' \
+        "$(metadata_services_json)"
+      ;;
+    describe-service)
+      [[ -n "$service" ]] || emit_error "Missing required parameter" "service is required"
+      printf '{"ok":true,"mode":"describe-service","service":%s,"summary":"Service description returned successfully."}\n' \
+        "$(service_schema_json "$service")"
+      ;;
+    validate-service-input)
+      [[ -n "$service" ]] || emit_error "Missing required parameter" "service is required"
+      validate_service_input_json "$service"
+      printf '\n'
+      ;;
+    *)
+      emit_error "Unsupported metadata mode" "mode=$mode"
+      ;;
+  esac
+}
+
 resolve_mode() {
   local requested_mode="${PARAMS[mode]:-}"
 
@@ -120,7 +454,7 @@ validate_mode_for_phase() {
   local mode="$1"
 
   case "$PHASE:$mode" in
-    collect:self-doc|collect:diagnose|collect:collect|collect:preflight-create)
+    collect:list-services|collect:describe-service|collect:validate-service-input|collect:self-doc|collect:diagnose|collect:collect|collect:preflight-create)
       return 0
       ;;
     execute:diagnose|execute:collect|execute:preflight-create|execute:create-ct|execute:get-ct-info|execute:stop-ct|execute:destroy-ct|execute:ensure-ct)
@@ -183,6 +517,11 @@ main() {
   local mode
   mode="$(resolve_mode)"
   validate_mode_for_phase "$mode"
+
+  if is_metadata_mode "$mode"; then
+    handle_metadata_mode "$mode"
+    exit 0
+  fi
 
   if [[ "$PHASE" == "execute" && "$CONFIRMED" != "true" ]]; then
     emit_error "Execution requires confirmation" "Set confirmed=true"

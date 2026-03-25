@@ -475,6 +475,62 @@ function script_test_help_payload(string $scriptName): array
     return $help;
 }
 
+function run_script_json_by_name(PDO $pdo, string $scriptName, string $phase, bool $confirmed, array $params): array
+{
+    $pc = precheck($pdo, $scriptName);
+    if (!$pc['file_found']) {
+        throw new RuntimeException('Le fichier script est introuvable.');
+    }
+
+    $command = build_cmd((string) $pc['row']['file_name'], $phase, $confirmed, $params);
+    $output = trim(run_script_command($command, $pc['script_env']));
+    $decoded = json_decode($output, true);
+
+    if (!is_array($decoded)) {
+        throw new RuntimeException('Le script n a pas retourne un JSON valide.');
+    }
+
+    return $decoded;
+}
+
+function script_service_catalog(PDO $pdo, string $scriptName): array
+{
+    if ($scriptName === 'proxmox-diagnose.sh') {
+        $payload = run_script_json_by_name($pdo, $scriptName, 'collect', false, [
+            'mode' => 'list-services',
+        ]);
+        return is_array($payload['services'] ?? null) ? $payload['services'] : [];
+    }
+
+    return [];
+}
+
+function script_service_info(PDO $pdo, string $scriptName, string $serviceName): array
+{
+    if ($scriptName === 'proxmox-diagnose.sh') {
+        $payload = run_script_json_by_name($pdo, $scriptName, 'collect', false, [
+            'mode' => 'describe-service',
+            'service' => $serviceName,
+        ]);
+        return is_array($payload['service'] ?? null) ? $payload['service'] : [];
+    }
+
+    throw new RuntimeException('Aucune description de service disponible pour ce script.');
+}
+
+function script_service_validate(PDO $pdo, string $scriptName, string $serviceName, array $knownParams): array
+{
+    if ($scriptName === 'proxmox-diagnose.sh') {
+        $params = array_merge($knownParams, [
+            'mode' => 'validate-service-input',
+            'service' => $serviceName,
+        ]);
+        return run_script_json_by_name($pdo, $scriptName, 'collect', false, $params);
+    }
+
+    throw new RuntimeException('La validation de service n est pas disponible pour ce script.');
+}
+
 function registry_all(PDO $pdo): array
 {
     return $pdo->query(

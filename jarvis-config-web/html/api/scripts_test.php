@@ -19,14 +19,114 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') ===
     try {
         $name = trim((string) ($_GET['script_name'] ?? ''));
         $phase = trim((string) ($_GET['phase'] ?? 'collect'));
+        $service = trim((string) ($_GET['service'] ?? ''));
 
+        if ($name === '') {
+            throw new RuntimeException('script_name obligatoire.');
+        }
+
+        if ($name === 'proxmox-diagnose.sh' && $service !== '') {
+            $serviceInfo = script_service_info($pdo, $name, $service);
+            echo json_encode([
+                'ok' => true,
+                'example' => [
+                    'script_name' => $name,
+                    'phase' => (string) ($serviceInfo['phase'] ?? $phase),
+                    'confirmed' => (bool) ($serviceInfo['confirmed_required'] ?? false),
+                    'summary' => 'Exemple genere depuis la description du service.',
+                    'notes' => [
+                        'Exemple base sur le service selectionne dans le script.',
+                    ],
+                    'params' => (array) ($serviceInfo['example_params'] ?? []),
+                    'pretty_params_json' => json_encode(
+                        (array) ($serviceInfo['example_params'] ?? []),
+                        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+                    ),
+                ],
+            ], JSON_UNESCAPED_SLASHES);
+            exit;
+        }
+
+        echo json_encode([
+            'ok' => true,
+            'example' => script_test_example_payload($name, $phase),
+        ], JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(400);
+        echo json_encode([
+            'ok' => false,
+            'message' => $e->getMessage(),
+        ], JSON_UNESCAPED_SLASHES);
+    }
+
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') === 'service_catalog') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    try {
+        $name = trim((string) ($_GET['script_name'] ?? ''));
         if ($name === '') {
             throw new RuntimeException('script_name obligatoire.');
         }
 
         echo json_encode([
             'ok' => true,
-            'example' => script_test_example_payload($name, $phase),
+            'services' => script_service_catalog($pdo, $name),
+        ], JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(400);
+        echo json_encode([
+            'ok' => false,
+            'message' => $e->getMessage(),
+        ], JSON_UNESCAPED_SLASHES);
+    }
+
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') === 'service_info') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    try {
+        $name = trim((string) ($_GET['script_name'] ?? ''));
+        $service = trim((string) ($_GET['service'] ?? ''));
+        if ($name === '' || $service === '') {
+            throw new RuntimeException('script_name et service sont obligatoires.');
+        }
+
+        echo json_encode([
+            'ok' => true,
+            'service' => script_service_info($pdo, $name, $service),
+        ], JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(400);
+        echo json_encode([
+            'ok' => false,
+            'message' => $e->getMessage(),
+        ], JSON_UNESCAPED_SLASHES);
+    }
+
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_GET['action'] ?? '') === 'validate_service') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    try {
+        jarvis_check_csrf();
+        $name = trim((string) ($_POST['script_name'] ?? ''));
+        $service = trim((string) ($_POST['service_name'] ?? ''));
+        $knownParams = validate_params_json((string) ($_POST['params_json'] ?? '{}'));
+
+        if ($name === '' || $service === '') {
+            throw new RuntimeException('script_name et service sont obligatoires.');
+        }
+
+        echo json_encode([
+            'ok' => true,
+            'validation' => script_service_validate($pdo, $name, $service, $knownParams),
         ], JSON_UNESCAPED_SLASHES);
     } catch (Throwable $e) {
         http_response_code(400);
@@ -128,7 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $rows = registry_all($pdo);
 ?>
-<div class="stack"><div class="notice">3 niveaux : <strong>pre-check</strong>, <strong>simulation</strong>, <strong>execution reelle</strong>.</div><div class="two"><div class="card"><h3>Parametres de test</h3><form id="scripts-test-form" method="post"><?= jarvis_csrf_input() ?><p><label>Script</label><select id="scripts-test-script-name" name="script_name"><option value="">-- Choisir un script --</option><?php foreach($rows as $r): ?><option value="<?= h($r['script_name']) ?>"><?= h($r['script_name']) ?> - <?= h($r['description']) ?></option><?php endforeach; ?></select></p><p><label>Phase</label><input id="scripts-test-phase" type="text" name="phase" value="collect"></p><p><label>Confirmed</label><select id="scripts-test-confirmed" name="confirmed"><option value="false">false</option><option value="true">true</option></select></p><p><label>Mode</label><select name="mode"><option value="precheck">Pre-check</option><option value="simulate">Simulation</option><option value="execute">Execution reelle</option></select></p><p><label>params JSON</label><textarea id="scripts-test-params-json" name="params_json">{}</textarea></p><div class="actions"><button class="secondary-btn" id="scripts-test-example-btn" type="button">Exemple params JSON</button><button class="primary-btn" type="submit">Lancer le test</button></div></form></div><div class="card"><h3>Convention supportee</h3><pre>bash /var/www/data/scripts/&lt;fichier&gt;
+<div class="stack"><div class="notice">3 niveaux : <strong>pre-check</strong>, <strong>simulation</strong>, <strong>execution reelle</strong>.</div><div class="two"><div class="card"><h3>Parametres de test</h3><form id="scripts-test-form" method="post"><?= jarvis_csrf_input() ?><p><label>Script</label><select id="scripts-test-script-name" name="script_name"><option value="">-- Choisir un script --</option><?php foreach($rows as $r): ?><option value="<?= h($r['script_name']) ?>"><?= h($r['script_name']) ?> - <?= h($r['description']) ?></option><?php endforeach; ?></select></p><p><label>Service</label><select id="scripts-test-service-name" name="service_name"><option value="">-- Choisir un service --</option></select></p><p><label>Phase</label><select id="scripts-test-phase" name="phase"><option value="collect">collect</option><option value="execute">execute</option></select></p><p><label>Confirmed</label><select id="scripts-test-confirmed" name="confirmed"><option value="false">false</option><option value="true">true</option></select></p><p><label>Mode du test</label><select name="mode"><option value="precheck">Pre-check</option><option value="simulate">Simulation</option><option value="execute">Execution reelle</option></select></p><p><label>params JSON</label><textarea id="scripts-test-params-json" name="params_json">{}</textarea></p><div class="actions"><button class="secondary-btn" id="scripts-test-service-info-btn" type="button">Infos du service</button><button class="secondary-btn" id="scripts-test-validate-btn" type="button">Verifier infos connues</button><button class="secondary-btn" id="scripts-test-example-btn" type="button">Exemple params JSON</button><button class="primary-btn" type="submit">Lancer le test</button></div></form></div><div class="card"><h3>Convention supportee</h3><pre>bash /var/www/data/scripts/&lt;fichier&gt;
   --phase &lt;phase&gt;
   --confirmed &lt;true|false&gt;
   --param key=value</pre><p class="small">Le runner PHP injecte les variables requises depuis <code>jarvis_script_env_values</code>.</p><p class="small"><strong>Phases MCP:</strong> <code>collect</code> et <code>execute</code>.</p><p class="small"><strong>Proxmox:</strong> <code>proxmox-diagnose.sh</code> est la nouvelle reference de dev/test. Le bouton d exemple pre-remplit un JSON adapte au script et a la phase.</p></div></div><div id="scripts-test-help" class="card"><h3>Phases et modes</h3><p class="small">Choisis un script pour afficher ses phases MCP et ses modes utiles.</p></div><div id="scripts-test-result" class="card"><h3>Resultat</h3><p class="small">Le resultat du test apparaitra ici.</p></div></div>
