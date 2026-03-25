@@ -13,6 +13,32 @@ if (!table_exists($pdo, 'jarvis_script_registry')) {
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') === 'example') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    try {
+        $name = trim((string) ($_GET['script_name'] ?? ''));
+        $phase = trim((string) ($_GET['phase'] ?? 'collect'));
+
+        if ($name === '') {
+            throw new RuntimeException('script_name obligatoire.');
+        }
+
+        echo json_encode([
+            'ok' => true,
+            'example' => script_test_example_payload($name, $phase),
+        ], JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(400);
+        echo json_encode([
+            'ok' => false,
+            'message' => $e->getMessage(),
+        ], JSON_UNESCAPED_SLASHES);
+    }
+
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         jarvis_check_csrf();
@@ -77,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $rows = registry_all($pdo);
 ?>
-<div class="stack"><div class="notice">3 niveaux : <strong>pre-check</strong>, <strong>simulation</strong>, <strong>execution reelle</strong>.</div><div class="two"><div class="card"><h3>Parametres de test</h3><form id="scripts-test-form" method="post"><?= jarvis_csrf_input() ?><p><label>Script</label><select name="script_name"><option value="">-- Choisir un script --</option><?php foreach($rows as $r): ?><option value="<?= h($r['script_name']) ?>"><?= h($r['script_name']) ?> - <?= h($r['description']) ?></option><?php endforeach; ?></select></p><p><label>Phase</label><input type="text" name="phase" value="collect"></p><p><label>Confirmed</label><select name="confirmed"><option value="false">false</option><option value="true">true</option></select></p><p><label>Mode</label><select name="mode"><option value="precheck">Pre-check</option><option value="simulate">Simulation</option><option value="execute">Execution reelle</option></select></p><p><label>params JSON</label><textarea name="params_json">{}</textarea></p><div class="actions"><button class="primary-btn" type="submit">Lancer le test</button></div></form></div><div class="card"><h3>Convention supportee</h3><pre>bash /var/www/data/scripts/&lt;fichier&gt;
+<div class="stack"><div class="notice">3 niveaux : <strong>pre-check</strong>, <strong>simulation</strong>, <strong>execution reelle</strong>.</div><div class="two"><div class="card"><h3>Parametres de test</h3><form id="scripts-test-form" method="post"><?= jarvis_csrf_input() ?><p><label>Script</label><select id="scripts-test-script-name" name="script_name"><option value="">-- Choisir un script --</option><?php foreach($rows as $r): ?><option value="<?= h($r['script_name']) ?>"><?= h($r['script_name']) ?> - <?= h($r['description']) ?></option><?php endforeach; ?></select></p><p><label>Phase</label><input id="scripts-test-phase" type="text" name="phase" value="collect"></p><p><label>Confirmed</label><select id="scripts-test-confirmed" name="confirmed"><option value="false">false</option><option value="true">true</option></select></p><p><label>Mode</label><select name="mode"><option value="precheck">Pre-check</option><option value="simulate">Simulation</option><option value="execute">Execution reelle</option></select></p><p><label>params JSON</label><textarea id="scripts-test-params-json" name="params_json">{}</textarea></p><div class="actions"><button class="secondary-btn" id="scripts-test-example-btn" type="button">Exemple params JSON</button><button class="primary-btn" type="submit">Lancer le test</button></div></form></div><div class="card"><h3>Convention supportee</h3><pre>bash /var/www/data/scripts/&lt;fichier&gt;
   --phase &lt;phase&gt;
   --confirmed &lt;true|false&gt;
-  --param key=value</pre><p class="small">Le runner PHP injecte les variables requises depuis <code>jarvis_script_env_values</code>.</p></div></div><div id="scripts-test-result" class="card"><h3>Resultat</h3><p class="small">Le resultat du test apparaitra ici.</p></div></div>
+  --param key=value</pre><p class="small">Le runner PHP injecte les variables requises depuis <code>jarvis_script_env_values</code>.</p><p class="small"><strong>Proxmox:</strong> <code>proxmox-diagnose.sh</code> est la nouvelle reference de dev/test. Le bouton d exemple pre-remplit un JSON adapte au script et a la phase.</p></div></div><div id="scripts-test-result" class="card"><h3>Resultat</h3><p class="small">Le resultat du test apparaitra ici.</p></div></div>

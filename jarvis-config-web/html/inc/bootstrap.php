@@ -322,6 +322,96 @@ function validate_params_json(string $json): array
     return $decoded;
 }
 
+function script_test_example_payload(string $scriptName, string $phase): array
+{
+    $normalizedPhase = trim($phase) === '' ? 'collect' : trim($phase);
+    $example = [
+        'script_name' => $scriptName,
+        'phase' => $normalizedPhase,
+        'confirmed' => $normalizedPhase === 'execute',
+        'summary' => 'Exemple generique de params JSON.',
+        'notes' => [
+            'Adapte les valeurs a ton environnement avant execution reelle.',
+        ],
+        'params' => [],
+    ];
+
+    if ($scriptName === 'proxmox-diagnose.sh') {
+        if ($normalizedPhase === 'execute') {
+            $example['summary'] = 'Exemple de preflight pour la nouvelle version Proxmox.';
+            $example['params'] = [
+                'mode' => 'preflight-create',
+                'host' => '192.168.11.248',
+                'user' => 'root',
+                'password' => 'change-me',
+                'sudo' => true,
+                'type' => 'ct',
+                'template' => 'debian-12-standard_12.7-1_amd64.tar.zst',
+                'storage' => 'local-lvm',
+                'bridge' => 'vmbr0',
+                'vmid' => '9100',
+                'hostname' => 'ctdev',
+                'cores' => '2',
+                'memory' => '2048',
+                'disk' => '8',
+                'install_ssh' => true,
+            ];
+            $example['notes'] = [
+                'Cet exemple reste non destructif car il utilise mode=preflight-create.',
+                'Pour creer reellement un CT, remplace mode par create-ct.',
+                'Les autres modes utiles sont get-ct-info, stop-ct, destroy-ct et ensure-ct.',
+            ];
+        } else {
+            $example['summary'] = 'Exemple de collecte pour la nouvelle version Proxmox.';
+            $example['confirmed'] = false;
+            $example['params'] = [
+                'mode' => 'collect',
+                'host' => '192.168.11.248',
+                'user' => 'root',
+                'password' => 'change-me',
+                'sudo' => true,
+            ];
+            $example['notes'] = [
+                'Tu peux remplacer mode=collect par diagnose ou self-doc pour des tests plus simples.',
+                'Les variables host, user et password peuvent aussi venir de la DB si tu les stockes comme variables de script.',
+            ];
+        }
+    } elseif ($scriptName === 'proxmox-CTDEV.sh') {
+        if ($normalizedPhase === 'execute') {
+            $example['summary'] = 'Exemple historique pour proxmox-CTDEV.sh.';
+            $example['params'] = [
+                'vmid' => '9100',
+                'hostname' => 'ctdev',
+                'template' => 'debian-12-standard_12.7-1_amd64.tar.zst',
+                'cores' => '2',
+                'memory' => '2048',
+                'storage' => 'local-lvm',
+                'disk' => '8',
+                'bridge' => 'vmbr0',
+            ];
+            $example['notes'] = [
+                'Ce script est le point de depart historique.',
+                'Pour la nouvelle logique de dev et diagnostic, prefere proxmox-diagnose.sh.',
+            ];
+        } else {
+            $example['summary'] = 'La phase collect historique n utilise generalement pas de params.';
+            $example['confirmed'] = false;
+            $example['params'] = [];
+            $example['notes'] = [
+                'La collecte depend surtout des variables Proxmox chargees depuis la DB.',
+                'Pour les nouveaux tests orientes dev, prefere proxmox-diagnose.sh.',
+            ];
+        }
+    }
+
+    $example['pretty_params_json'] = json_encode(
+        $example['params'],
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+    );
+
+    return $example;
+}
+
 function registry_all(PDO $pdo): array
 {
     return $pdo->query(
