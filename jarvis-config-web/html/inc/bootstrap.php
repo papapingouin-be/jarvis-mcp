@@ -412,6 +412,69 @@ function script_test_example_payload(string $scriptName, string $phase): array
     return $example;
 }
 
+function script_test_help_payload(string $scriptName): array
+{
+    $help = [
+        'script_name' => $scriptName,
+        'mcp_phases' => [
+            'collect' => 'Lecture, inventaire, diagnostic ou preparation.',
+            'execute' => 'Action active ou sensible, a utiliser avec confirmed=true.',
+        ],
+        'recommended_phase_by_mode' => [],
+        'modes' => [],
+        'notes' => [
+            'La phase MCP et le mode du script sont deux notions differentes.',
+        ],
+    ];
+
+    if ($scriptName === 'proxmox-diagnose.sh') {
+        $help['modes'] = [
+            'self-doc' => 'Retourne la documentation machine-readable du script.',
+            'diagnose' => 'Teste SSH, contexte distant et commandes Proxmox.',
+            'collect' => 'Collecte templates, storages, bridges, CT/VM et nextid.',
+            'preflight-create' => 'Verifie si une future creation parait faisable.',
+            'create-ct' => 'Cree et demarre un conteneur CT.',
+            'get-ct-info' => 'Lit etat, nom, config et IP d un CT.',
+            'stop-ct' => 'Arrete un CT existant.',
+            'destroy-ct' => 'Supprime un CT existant.',
+            'ensure-ct' => 'Garantit qu un CT existe et tourne.',
+        ];
+        $help['recommended_phase_by_mode'] = [
+            'self-doc' => 'collect',
+            'diagnose' => 'collect',
+            'collect' => 'collect',
+            'preflight-create' => 'execute',
+            'create-ct' => 'execute',
+            'get-ct-info' => 'execute',
+            'stop-ct' => 'execute',
+            'destroy-ct' => 'execute',
+            'ensure-ct' => 'execute',
+        ];
+        $help['notes'] = [
+            'Pour ce script, le comportement reel est pilote surtout par params.mode.',
+            'Utilise en general phase=collect pour les lectures et phase=execute pour les actions ou preflights explicites.',
+            'Le bouton Exemple params JSON te donne un preset adapte a la phase courante.',
+        ];
+    } elseif ($scriptName === 'proxmox-CTDEV.sh') {
+        $help['modes'] = [
+            'collect' => 'Collecte templates et CT existants.',
+            'execute' => 'Cree et demarre un CT de developpement.',
+        ];
+        $help['recommended_phase_by_mode'] = [
+            'collect' => 'collect',
+            'execute' => 'execute',
+        ];
+        $help['notes'] = [
+            'Script historique plus simple.',
+            'Pour les nouveaux tests de dev et diagnostic, prefere proxmox-diagnose.sh.',
+        ];
+    } else {
+        $help['notes'][] = 'Aucune aide specifique disponible pour ce script.';
+    }
+
+    return $help;
+}
+
 function registry_all(PDO $pdo): array
 {
     return $pdo->query(

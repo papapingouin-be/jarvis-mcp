@@ -131,6 +131,58 @@ function renderScriptExample(example) {
   `;
 }
 
+function renderScriptHelp(help) {
+  const phases = Object.entries(help.mcp_phases || {})
+    .map(([phase, description]) => `<li><code>${phase}</code> - ${description}</li>`)
+    .join("");
+
+  const modes = Object.entries(help.modes || {})
+    .map(([mode, description]) => {
+      const recommendedPhase = help.recommended_phase_by_mode?.[mode];
+      const suffix = recommendedPhase ? ` <span class="small">(phase recommandee: <code>${recommendedPhase}</code>)</span>` : "";
+      return `<li><code>${mode}</code> - ${description}${suffix}</li>`;
+    })
+    .join("");
+
+  const notes = Array.isArray(help.notes)
+    ? help.notes.map((note) => `<li>${note}</li>`).join("")
+    : "";
+
+  return `
+    <p class="small"><strong>Phases MCP</strong></p>
+    <ul>${phases}</ul>
+    <p class="small"><strong>Modes du script</strong></p>
+    <ul>${modes || "<li>Aucun mode documente.</li>"}</ul>
+    ${notes ? `<p class="small"><strong>Notes</strong></p><ul>${notes}</ul>` : ""}
+  `;
+}
+
+async function refreshScriptsTestHelp() {
+  const scriptName = document.getElementById("scripts-test-script-name")?.value || "";
+  const helpContainer = document.getElementById("scripts-test-help");
+
+  if (!helpContainer) {
+    return;
+  }
+
+  if (scriptName.trim() === "") {
+    helpContainer.innerHTML = "<h3>Phases et modes</h3><p class=\"small\">Choisis un script pour afficher ses phases MCP et ses modes utiles.</p>";
+    return;
+  }
+
+  const response = await fetch(
+    `api/scripts_test.php?action=help&script_name=${encodeURIComponent(scriptName)}`
+  );
+  const payload = await response.json();
+
+  if (!payload.ok) {
+    helpContainer.innerHTML = `<h3>Phases et modes</h3><div class="notice error"><pre>${payload.message || "Erreur help"}</pre></div>`;
+    return;
+  }
+
+  helpContainer.innerHTML = `<h3>Phases et modes</h3>${renderScriptHelp(payload.help)}`;
+}
+
 function bindScriptsTestForm() {
   const testForm = document.getElementById("scripts-test-form");
   if (!testForm) {
@@ -149,6 +201,23 @@ function bindScriptsTestForm() {
   };
 
   const exampleButton = document.getElementById("scripts-test-example-btn");
+  const scriptNameInput = document.getElementById("scripts-test-script-name");
+  const phaseInput = document.getElementById("scripts-test-phase");
+
+  if (scriptNameInput) {
+    scriptNameInput.onchange = () => {
+      refreshScriptsTestHelp();
+    };
+  }
+
+  if (phaseInput) {
+    phaseInput.onchange = () => {
+      refreshScriptsTestHelp();
+    };
+  }
+
+  refreshScriptsTestHelp();
+
   if (!exampleButton) {
     return;
   }
