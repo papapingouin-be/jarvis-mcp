@@ -200,6 +200,37 @@ function renderValidation(validation) {
   `;
 }
 
+function setResultLoading(result, title, message = "Chargement en cours...") {
+  if (!result) {
+    return;
+  }
+
+  result.innerHTML = `
+    <div class="card">
+      <h3>${title}</h3>
+      <div class="notice info">
+        <strong>Traitement en cours</strong><br>
+        ${message}
+      </div>
+    </div>
+  `;
+}
+
+function setButtonBusy(button, busyLabel) {
+  if (!button) {
+    return () => {};
+  }
+
+  const previousLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = busyLabel;
+
+  return () => {
+    button.disabled = false;
+    button.textContent = previousLabel;
+  };
+}
+
 async function refreshScriptsTestHelp() {
   const scriptName = document.getElementById("scripts-test-script-name")?.value || "";
   const helpContainer = document.getElementById("scripts-test-help");
@@ -229,6 +260,7 @@ async function refreshScriptsTestHelp() {
 async function loadScriptServices() {
   const scriptName = document.getElementById("scripts-test-script-name")?.value || "";
   const serviceSelect = document.getElementById("scripts-test-service-name");
+  const result = document.getElementById("scripts-test-result");
 
   if (!serviceSelect) {
     return;
@@ -240,12 +272,20 @@ async function loadScriptServices() {
     return;
   }
 
+  setResultLoading(result, "Services", "Chargement des services exposes par le script...");
+
   const response = await fetch(
     `api/scripts_test.php?action=service_catalog&script_name=${encodeURIComponent(scriptName)}`
   );
   const payload = await response.json();
 
   if (!payload.ok || !Array.isArray(payload.services)) {
+    result.innerHTML = `<div class="notice error"><pre>${payload.message || "Impossible de charger les services."}</pre></div>`;
+    return;
+  }
+
+  if (payload.services.length === 0) {
+    result.innerHTML = '<div class="notice warning">Ce script ne publie aucun service exploitable dans cette vue.</div>';
     return;
   }
 
@@ -255,6 +295,8 @@ async function loadScriptServices() {
     option.textContent = `${service.name || ""} - phase ${service.phase || "?"}`;
     serviceSelect.appendChild(option);
   });
+
+  result.innerHTML = `<div class="notice success">${payload.services.length} service(s) charges. Choisis un service puis clique sur <strong>Infos du service</strong>.</div>`;
 }
 
 function bindScriptsTestForm() {
@@ -310,25 +352,39 @@ function bindScriptsTestForm() {
         return;
       }
 
-      const response = await fetch(
-        `api/scripts_test.php?action=service_info&script_name=${encodeURIComponent(scriptName)}&service=${encodeURIComponent(serviceName)}`
-      );
-      const payload = await response.json();
+      setResultLoading(result, "Infos du service", "Recuperation de la description du service...");
+      const done = setButtonBusy(serviceInfoButton, "Chargement...");
 
-      if (!payload.ok) {
-        result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur service_info"}</pre></div>`;
-        return;
+      try {
+        const response = await fetch(
+          `api/scripts_test.php?action=service_info&script_name=${encodeURIComponent(scriptName)}&service=${encodeURIComponent(serviceName)}`
+        );
+        const payload = await response.json();
+
+        if (!payload.ok) {
+          result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur service_info"}</pre></div>`;
+          return;
+        }
+
+        if (!payload.service || Object.keys(payload.service).length === 0) {
+          result.innerHTML = '<div class="notice warning">Le script n a retourne aucune information pour ce service.</div>';
+          return;
+        }
+
+        if (phaseInput && payload.service?.phase) {
+          phaseInput.value = payload.service.phase;
+        }
+
+        if (confirmedInput) {
+          confirmedInput.value = payload.service?.confirmed_required ? "true" : "false";
+        }
+
+        result.innerHTML = `<div class="card"><h3>Infos du service</h3>${renderServiceInfo(payload.service || {})}</div>`;
+      } catch (error) {
+        result.innerHTML = `<div class="notice error"><pre>${error?.message || "Erreur reseau service_info"}</pre></div>`;
+      } finally {
+        done();
       }
-
-      if (phaseInput && payload.service?.phase) {
-        phaseInput.value = payload.service.phase;
-      }
-
-      if (confirmedInput) {
-        confirmedInput.value = payload.service?.confirmed_required ? "true" : "false";
-      }
-
-      result.innerHTML = `<div class="card"><h3>Infos du service</h3>${renderServiceInfo(payload.service || {})}</div>`;
     };
   }
 
@@ -346,31 +402,44 @@ function bindScriptsTestForm() {
       return;
     }
 
-    const response = await fetch(
-      `api/scripts_test.php?action=example&script_name=${encodeURIComponent(scriptName)}&phase=${encodeURIComponent(phase)}&service=${encodeURIComponent(service)}`
-    );
-    const payload = await response.json();
+    setResultLoading(result, "Exemple params JSON", "Generation de l exemple adapte au service courant...");
+    const done = setButtonBusy(exampleButton, "Generation...");
 
-    if (!payload.ok) {
-      result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur example"}</pre></div>`;
-      return;
+    try {
+      const response = await fetch(
+        `api/scripts_test.php?action=example&script_name=${encodeURIComponent(scriptName)}&phase=${encodeURIComponent(phase)}&service=${encodeURIComponent(service)}`
+      );
+      const payload = await response.json();
+
+      if (!payload.ok) {
+        result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur example"}</pre></div>`;
+        return;
+      }
+
+      const example = payload.example;
+      if (!example) {
+        result.innerHTML = '<div class="notice warning">Aucun exemple n a ete retourne par le script.</div>';
+        return;
+      }
+
+      if (paramsJsonInput) {
+        paramsJsonInput.value = example.pretty_params_json || "{}";
+      }
+
+      if (confirmedInput) {
+        confirmedInput.value = example.confirmed ? "true" : "false";
+      }
+
+      if (phaseInput && example.phase) {
+        phaseInput.value = example.phase;
+      }
+
+      result.innerHTML = `<div class="card"><h3>Exemple params JSON</h3>${renderScriptExample(example)}</div>`;
+    } catch (error) {
+      result.innerHTML = `<div class="notice error"><pre>${error?.message || "Erreur reseau example"}</pre></div>`;
+    } finally {
+      done();
     }
-
-    const example = payload.example;
-
-    if (paramsJsonInput) {
-      paramsJsonInput.value = example.pretty_params_json || "{}";
-    }
-
-    if (confirmedInput) {
-      confirmedInput.value = example.confirmed ? "true" : "false";
-    }
-
-    if (phaseInput && example.phase) {
-      phaseInput.value = example.phase;
-    }
-
-    result.innerHTML = `<div class="card"><h3>Exemple params JSON</h3>${renderScriptExample(example)}</div>`;
   };
 
   if (validateButton) {
@@ -383,28 +452,42 @@ function bindScriptsTestForm() {
         return;
       }
 
-      const body = new URLSearchParams(new FormData(testForm)).toString();
-      const response = await fetch("api/scripts_test.php?action=validate_service", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      });
-      const payload = await response.json();
+      setResultLoading(result, "Verification des infos connues", "Analyse des champs fournis et des champs manquants...");
+      const done = setButtonBusy(validateButton, "Verification...");
 
-      if (!payload.ok) {
-        result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur validate_service"}</pre></div>`;
-        return;
+      try {
+        const body = new URLSearchParams(new FormData(testForm)).toString();
+        const response = await fetch("api/scripts_test.php?action=validate_service", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        });
+        const payload = await response.json();
+
+        if (!payload.ok) {
+          result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur validate_service"}</pre></div>`;
+          return;
+        }
+
+        if (!payload.validation) {
+          result.innerHTML = '<div class="notice warning">Le script n a retourne aucun resultat de validation.</div>';
+          return;
+        }
+
+        if (phaseInput && payload.validation?.phase) {
+          phaseInput.value = payload.validation.phase;
+        }
+
+        if (confirmedInput) {
+          confirmedInput.value = payload.validation?.confirmed_required ? "true" : "false";
+        }
+
+        result.innerHTML = `<div class="card"><h3>Verification des infos connues</h3>${renderValidation(payload.validation || {})}</div>`;
+      } catch (error) {
+        result.innerHTML = `<div class="notice error"><pre>${error?.message || "Erreur reseau validate_service"}</pre></div>`;
+      } finally {
+        done();
       }
-
-      if (phaseInput && payload.validation?.phase) {
-        phaseInput.value = payload.validation.phase;
-      }
-
-      if (confirmedInput) {
-        confirmedInput.value = payload.validation?.confirmed_required ? "true" : "false";
-      }
-
-      result.innerHTML = `<div class="card"><h3>Verification des infos connues</h3>${renderValidation(payload.validation || {})}</div>`;
     };
   }
 }
