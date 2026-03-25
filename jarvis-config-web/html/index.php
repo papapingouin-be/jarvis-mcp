@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Jarvis UI V7.1</title>
+<title>Jarvis UI V7.2</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <div id="app">
   <aside id="sidebar">
-    <h1>Jarvis V7.1</h1>
+    <h1>Jarvis V7.2</h1>
     <div class="group">Scripts MCP</div>
     <button class="nav-btn active" data-page="overview">Vue d'ensemble</button>
     <button class="nav-btn" data-page="scripts_admin">Gestion scripts</button>
