@@ -31,6 +31,12 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
     ],
     description: "Collecte les templates/CT Proxmox puis cree et demarre un conteneur CT de developpement.",
   },
+  "proxmox-diagnose.sh": {
+    name: "proxmox-diagnose.sh",
+    file_name: "proxmox-diagnose.sh",
+    required_env: [],
+    description: "Diagnostic et orchestration Proxmox via SSH, avec modes collect, preflight et gestion CT.",
+  },
 };
 
 const DEFAULT_SCRIPT_RUNNER_SENSITIVE_ENV_NAMES = [
