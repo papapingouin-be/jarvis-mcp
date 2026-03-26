@@ -30,6 +30,11 @@ try {
             $scriptName = trim((string) ($_POST['script_name'] ?? ''));
             registry_delete($pdo, $scriptName);
             $msg = 'Script supprime de la registry.';
+        } elseif ($action === 'install_script' || $action === 'install_script_overwrite') {
+            $relativePath = trim((string) ($_POST['relative_path'] ?? ''));
+            $installResult = install_script_into_runtime($relativePath, $action === 'install_script_overwrite');
+            $msg = 'Script installe dans le systeme Jarvis : ' . $installResult['relative_path'] . '. Lance ensuite la synchronisation DB.';
+            jarvis_append_log('scripts-admin', (string) $installResult['relative_path'], 'installed', (string) $installResult['target']);
         } elseif ($action === 'sync_preview' || $action === 'sync_apply') {
             $disableMissing = isset($_POST['disable_missing']) ? 'true' : 'false';
             $dryRun = $action === 'sync_preview' ? 'true' : 'false';
@@ -73,6 +78,9 @@ $incompatibleScripts = array_values(array_filter(
     $discoveredScripts,
     static fn(array $script): bool => empty($script['registry_compatible'])
 ));
+$installCatalogScripts = scan_install_catalog_scripts();
+$runtimeScripts = scan_scripts();
+$runtimeScriptMap = array_fill_keys($runtimeScripts, true);
 ?>
 <div class="stack">
   <div class="notice">
@@ -89,6 +97,54 @@ $incompatibleScripts = array_values(array_filter(
   <?php endif; ?>
 
   <div class="two">
+    <div class="card">
+      <h3>Installer un script dans Jarvis</h3>
+      <p class="small">
+        Le catalogue d installation est lu depuis <code><?= h(script_install_catalog_root()) ?></code>.
+        Le dossier runtime Jarvis est <code><?= h(scripts_root()) ?></code>.
+      </p>
+      <?php if (!$installCatalogScripts): ?>
+        <p class="small">Aucun script disponible dans le catalogue d installation.</p>
+      <?php else: ?>
+        <table>
+          <thead>
+            <tr>
+              <th>script catalogue</th>
+              <th>present dans Jarvis</th>
+              <th>action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($installCatalogScripts as $catalogScript): ?>
+              <?php $alreadyInstalled = isset($runtimeScriptMap[$catalogScript]); ?>
+              <tr>
+                <td><code><?= h($catalogScript) ?></code></td>
+                <td><span class="status <?= $alreadyInstalled ? 'up' : 'warn' ?>"><?= $alreadyInstalled ? 'OUI' : 'NON' ?></span></td>
+                <td>
+                  <div class="actions">
+                    <form method="post">
+                      <?= jarvis_csrf_input() ?>
+                      <input type="hidden" name="form_action" value="install_script">
+                      <input type="hidden" name="relative_path" value="<?= h($catalogScript) ?>">
+                      <button class="secondary-btn" type="submit" <?= $alreadyInstalled ? 'disabled' : '' ?>>Installer</button>
+                    </form>
+                    <?php if ($alreadyInstalled): ?>
+                      <form method="post">
+                        <?= jarvis_csrf_input() ?>
+                        <input type="hidden" name="form_action" value="install_script_overwrite">
+                        <input type="hidden" name="relative_path" value="<?= h($catalogScript) ?>">
+                        <button class="ghost-btn" type="submit" data-confirm="Ecraser <?= h($catalogScript) ?> dans le systeme Jarvis ?">Ecraser</button>
+                      </form>
+                    <?php endif; ?>
+                  </div>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
+    </div>
+
     <div class="card">
       <h3>Synchronisation DB</h3>
       <p class="small">

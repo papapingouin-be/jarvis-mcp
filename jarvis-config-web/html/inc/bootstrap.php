@@ -256,6 +256,39 @@ function scripts_root(): string
         ?: '/var/www/data/scripts';
 }
 
+function script_install_catalog_root(): string
+{
+    return env_value('JARVIS_SCRIPT_INSTALL_CATALOG_ROOT')
+        ?: jarvis_data_path('script-catalog');
+}
+
+function scan_script_root(string $root): array
+{
+    $out = [];
+
+    if (!is_dir($root)) {
+        return $out;
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS)
+    );
+
+    foreach ($iterator as $file) {
+        if (!$file->isFile()) {
+            continue;
+        }
+
+        $relative = str_replace(str_replace('\\', '/', $root) . '/', '', str_replace('\\', '/', $file->getPathname()));
+        if (preg_match('#^[a-zA-Z0-9._/-]+$#', $relative)) {
+            $out[] = $relative;
+        }
+    }
+
+    sort($out);
+    return $out;
+}
+
 function safe_script_rel(string $rel): string
 {
     $rel = trim(str_replace('\\', '/', $rel));
@@ -273,6 +306,11 @@ function safe_script_rel(string $rel): string
 function script_abs(string $rel): string
 {
     return scripts_root() . '/' . safe_script_rel($rel);
+}
+
+function script_install_source_abs(string $rel): string
+{
+    return script_install_catalog_root() . '/' . safe_script_rel($rel);
 }
 
 function sql_abs(string $rel): string
@@ -680,30 +718,47 @@ function registry_run_json(string $mode, string $phase = 'collect', bool $confir
 
 function scan_scripts(): array
 {
-    $root = scripts_root();
-    $out = [];
+    return scan_script_root(scripts_root());
+}
 
-    if (!is_dir($root)) {
-        return $out;
+function scan_install_catalog_scripts(): array
+{
+    return scan_script_root(script_install_catalog_root());
+}
+
+function install_script_into_runtime(string $relativePath, bool $overwrite = false): array
+{
+    $relative = safe_script_rel($relativePath);
+    $source = script_install_source_abs($relative);
+    $target = script_abs($relative);
+
+    if (!is_file($source)) {
+        throw new RuntimeException('Le script source a installer est introuvable dans le catalogue.');
     }
 
-    $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS)
-    );
-
-    foreach ($iterator as $file) {
-        if (!$file->isFile()) {
-            continue;
-        }
-
-        $relative = str_replace($root . '/', '', $file->getPathname());
-        if (preg_match('#^[a-zA-Z0-9._/-]+$#', $relative)) {
-            $out[] = $relative;
-        }
+    if (is_file($target) && !$overwrite) {
+        throw new RuntimeException('Le script existe deja dans le systeme Jarvis. Utilise le mode ecrasement si besoin.');
     }
 
-    sort($out);
-    return $out;
+    $targetDir = dirname($target);
+    if (!is_dir($targetDir) && !mkdir($targetDir, 0775, true) && !is_dir($targetDir)) {
+        throw new RuntimeException('Impossible de creer le dossier cible pour le script.');
+    }
+
+    if (!copy($source, $target)) {
+        throw new RuntimeException('La copie du script a echoue.');
+    }
+
+    $sourcePerms = @fileperms($source);
+    $mode = $sourcePerms !== false ? ($sourcePerms & 0777) : 0755;
+    @chmod($target, $mode);
+
+    return [
+        'source' => $source,
+        'target' => $target,
+        'relative_path' => $relative,
+        'mode' => substr(sprintf('%o', $mode), -4),
+    ];
 }
 
 function precheck(PDO $pdo, string $scriptName): array
