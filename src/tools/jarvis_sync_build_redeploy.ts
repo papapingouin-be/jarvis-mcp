@@ -8,7 +8,10 @@ import type { RegisterableModule } from "../registry/types.js";
 
 const execFileAsync = promisify(execFile);
 
-const phaseSchema = z.enum([
+const phaseSchema = z.enum(["collect", "execute"]);
+const modeSchema = z.enum([
+  "self-doc",
+  "registry-doc",
   "all",
   "sync",
   "install",
@@ -50,8 +53,10 @@ const jarvisSyncBuildRedeployModule: RegisterableModule = {
       "jarvis_sync_build_redeploy",
       "Run the Jarvis sync/build/redeploy shell workflow and return its JSON summary.",
       {
-        phase: phaseSchema.optional().default("all").describe("Workflow phase: all, sync, install, build, deploy-web, deploy-scripts, mirror, webhook, restart."),
-        dry_run: z.boolean().optional().default(false).describe("Run the workflow in simulation mode."),
+        phase: phaseSchema.optional().default("collect").describe("MCP phase: collect or execute."),
+        mode: modeSchema.optional().default("self-doc").describe("Workflow mode or metadata mode."),
+        confirmed: z.boolean().optional().default(false).describe("Required for execute modes unless dry_run=true."),
+        dry_run: z.boolean().optional().default(false).describe("Run execute modes in simulation mode."),
         env_file: z.string().min(1).optional().describe("Optional path to the .env file consumed by the shell script."),
       },
       async (args) => {
@@ -75,14 +80,21 @@ const jarvisSyncBuildRedeployModule: RegisterableModule = {
           };
         }
 
-        const execArgs: Array<string> = [];
+        const execArgs: Array<string> = [
+          "--phase",
+          args.phase,
+          "--confirmed",
+          args.confirmed ? "true" : "false",
+          "--param",
+          `mode=${args.mode}`,
+          "--param",
+          `dry_run=${args.dry_run ? "true" : "false"}`,
+          "--json-stdout",
+        ];
+
         if (args.env_file) {
-          execArgs.push("--env", args.env_file);
+          execArgs.push("--param", `env_file=${args.env_file}`);
         }
-        if (args.dry_run) {
-          execArgs.push("--dry-run");
-        }
-        execArgs.push("--phase", args.phase, "--json-stdout");
 
         try {
           const { stdout } = await execFileAsync(toolPath, execArgs, {

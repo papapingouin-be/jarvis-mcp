@@ -36,6 +36,10 @@ DRY_RUN=0
 PHASE="all"
 JSON_STDOUT=0
 ORIGINAL_STDOUT_FD=3
+MCP_PHASE=""
+MCP_CONFIRMED="false"
+MCP_MODE=""
+declare -A MCP_PARAMS=()
 
 CURRENT_STEP=""
 CURRENT_STEP_STATUS="pending"
@@ -79,36 +83,264 @@ Exemples:
 EOF
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --env)
-      shift
-      [[ $# -gt 0 ]] || { echo "[ERREUR] --env attend un fichier"; exit "$EXIT_ENV"; }
-      ENV_FILE="$1"
+json_escape_shell() {
+  local value="${1:-}"
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/}
+  value=${value//$'\t'/\\t}
+  printf '%s' "$value"
+}
+
+emit_mcp_json() {
+  printf '%s\n' "$1" >&${ORIGINAL_STDOUT_FD}
+}
+
+emit_mcp_error() {
+  local summary="$1"
+  local details="${2:-Operation failed}"
+  local mode="${3:-unknown}"
+  emit_mcp_json "$(printf '{"ok":false,"mode":"%s","summary":"%s","details":"%s"}' \
+    "$(json_escape_shell "$mode")" \
+    "$(json_escape_shell "$summary")" \
+    "$(json_escape_shell "$details")")"
+  exit 1
+}
+
+normalize_bool() {
+  local value="${1:-false}"
+  case "$value" in
+    true|TRUE|1|yes|YES|on|ON)
+      printf 'true'
       ;;
-    --dry-run)
-      DRY_RUN=1
-      ;;
-    --phase)
-      shift
-      [[ $# -gt 0 ]] || { echo "[ERREUR] --phase attend une valeur"; exit "$EXIT_ENV"; }
-      PHASE="$1"
-      ;;
-    --json-stdout)
-      JSON_STDOUT=1
-      ;;
-    --help|-h)
-      usage
-      exit 0
+    false|FALSE|0|no|NO|off|OFF|'')
+      printf 'false'
       ;;
     *)
-      echo "[ERREUR] Argument inconnu: $1"
-      usage
-      exit "$EXIT_ENV"
+      emit_mcp_error "Invalid boolean value" "Unsupported boolean value: ${value}" "${MCP_MODE:-argument-parse}"
       ;;
   esac
-  shift
-done
+}
+
+legacy_phase_to_mcp_phase() {
+  case "$1" in
+    self-doc|registry-doc)
+      printf 'collect'
+      ;;
+    *)
+      printf 'execute'
+      ;;
+  esac
+}
+
+mode_description() {
+  case "$1" in
+    self-doc) printf 'Return machine-readable documentation for the redeploy workflow script.' ;;
+    registry-doc) printf 'Return registry metadata for the redeploy workflow script.' ;;
+    all) printf 'Run the full workflow: sync, install, build, deploy, mirror, webhook, restart.' ;;
+    sync) printf 'Synchronize the local repository from GitHub.' ;;
+    install) printf 'Install npm dependencies in the local repository.' ;;
+    build) printf 'Build the local repository.' ;;
+    deploy-web) printf 'Deploy web code to the remote host.' ;;
+    deploy-scripts) printf 'Deploy runtime scripts to the shared scripts directory.' ;;
+    mirror) printf 'Mirror GitHub refs to Gitea.' ;;
+    webhook) printf 'Trigger the Portainer webhook.' ;;
+    restart) printf 'Restart the MCPO container.' ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_phase() {
+  legacy_phase_to_mcp_phase "$1"
+}
+
+service_confirmed_required() {
+  case "$1" in
+    self-doc|registry-doc)
+      printf 'false'
+      ;;
+    *)
+      printf 'true'
+      ;;
+  esac
+}
+
+metadata_services_json() {
+  local services="self-doc
+registry-doc
+all
+sync
+install
+build
+deploy-web
+deploy-scripts
+mirror
+webhook
+restart"
+  local output="["
+  local first=1
+  local service
+
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    if [[ $first -eq 0 ]]; then
+      output+=","
+    fi
+    output+="$(printf '{"name":"%s","phase":"%s","confirmed_required":%s,"description":"%s"}' \
+      "$(json_escape_shell "$service")" \
+      "$(service_phase "$service")" \
+      "$(service_confirmed_required "$service")" \
+      "$(json_escape_shell "$(mode_description "$service")")")"
+    first=0
+  done <<< "$services"
+
+  output+="]"
+  printf '%s' "$output"
+}
+
+self_doc_json() {
+  local file_name
+  file_name="$(basename "${BASH_SOURCE[0]}")"
+  emit_mcp_json "$(printf '{
+  "ok":true,
+  "mode":"self-doc",
+  "script":{
+    "script_name":"%s",
+    "file_name":"%s",
+    "description":"%s",
+    "version":"1.0.0",
+    "supports_registry":true,
+    "required_env":[
+      {"name":"jarvis_tools_GITHUB_TOKEN","required":true,"secret":true,"description":"GitHub token used for sync and mirror."},
+      {"name":"jarvis_tools_GITEA_TOKEN","required":true,"secret":true,"description":"Gitea token used for mirror."},
+      {"name":"JARVIS_LOCAL_REPO","required":true,"secret":false,"description":"Local repository path."},
+      {"name":"JARVIS_MIRROR_SCRIPT","required":true,"secret":false,"description":"Mirror helper script path."},
+      {"name":"JARVIS_TOOLS_WEBHOOK_URL","required":true,"secret":true,"description":"Portainer webhook URL."},
+      {"name":"JARVIS_MCPO_CONTAINER_NAME","required":true,"secret":false,"description":"MCPO container name."},
+      {"name":"JARVIS_srv_SSH","required":true,"secret":false,"description":"SSH host and port for deploy target."},
+      {"name":"JARVIS_srv_USER","required":true,"secret":false,"description":"SSH user for deploy target."}
+    ],
+    "services":%s,
+    "capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],
+    "tags":["jarvis","deploy","build","mcp","automation"]
+  },
+  "runtime":{
+    "accepted_phase_values":["collect","execute"],
+    "accepted_params":["mode","dry_run","env_file"],
+    "legacy_options":["--phase","--dry-run","--env","--json-stdout"]
+  },
+  "summary":"Jarvis sync/build/redeploy workflow self-documentation"
+}' \
+    "$(json_escape_shell "$file_name")" \
+    "$(json_escape_shell "$file_name")" \
+    "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.")" \
+    "$(metadata_services_json)")"
+}
+
+registry_doc_json() {
+  local file_name
+  file_name="$(basename "${BASH_SOURCE[0]}")"
+  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.0.0","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":true,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":true,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":true,"secret":false,"description":"Local repository path."},{"name":"JARVIS_MIRROR_SCRIPT","required":true,"secret":false,"description":"Mirror helper script path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":true,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":true,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":true,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":true,"secret":false,"description":"SSH user for deploy target."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
+    "$(json_escape_shell "$file_name")" \
+    "$(json_escape_shell "$file_name")" \
+    "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.")" \
+    "$(metadata_services_json)")"
+}
+
+parse_cli_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --phase)
+        shift
+        [[ $# -gt 0 ]] || emit_mcp_error "Invalid argument" "--phase requires a value" "argument-parse"
+        if [[ "$1" == "collect" || "$1" == "execute" ]]; then
+          MCP_PHASE="$1"
+        else
+          PHASE="$1"
+        fi
+        ;;
+      --confirmed)
+        shift
+        [[ $# -gt 0 ]] || emit_mcp_error "Invalid argument" "--confirmed requires true or false" "argument-parse"
+        MCP_CONFIRMED="$1"
+        ;;
+      --param)
+        shift
+        [[ $# -gt 0 ]] || emit_mcp_error "Invalid argument" "--param requires key=value" "argument-parse"
+        local kv="$1"
+        local key="${kv%%=*}"
+        local value="${kv#*=}"
+        if [[ -z "$key" || "$key" == "$kv" ]]; then
+          emit_mcp_error "Invalid parameter" "Expected --param key=value" "argument-parse"
+        fi
+        MCP_PARAMS["$key"]="$value"
+        ;;
+      --env)
+        shift
+        [[ $# -gt 0 ]] || emit_mcp_error "Invalid argument" "--env requires a file path" "argument-parse"
+        ENV_FILE="$1"
+        ;;
+      --dry-run)
+        DRY_RUN=1
+        ;;
+      --json-stdout)
+        JSON_STDOUT=1
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        emit_mcp_error "Invalid argument" "Unknown argument: $1" "argument-parse"
+        ;;
+    esac
+    shift
+  done
+}
+
+apply_mcp_adapter() {
+  if [[ -z "$MCP_PHASE" ]]; then
+    return
+  fi
+
+  JSON_STDOUT=1
+  MCP_CONFIRMED="$(normalize_bool "$MCP_CONFIRMED")"
+  MCP_MODE="${MCP_PARAMS[mode]:-}"
+  [[ -n "$MCP_MODE" ]] || emit_mcp_error "Missing parameter" "Expected --param mode=..." "dispatch"
+
+  case "$MCP_MODE" in
+    self-doc)
+      [[ "$MCP_PHASE" == "collect" ]] || emit_mcp_error "Invalid phase for mode" "Mode self-doc requires phase=collect" "self-doc"
+      self_doc_json
+      exit 0
+      ;;
+    registry-doc)
+      [[ "$MCP_PHASE" == "collect" ]] || emit_mcp_error "Invalid phase for mode" "Mode registry-doc requires phase=collect" "registry-doc"
+      registry_doc_json
+      exit 0
+      ;;
+    all|sync|install|build|deploy-web|deploy-scripts|mirror|webhook|restart)
+      [[ "$MCP_PHASE" == "execute" ]] || emit_mcp_error "Invalid phase for mode" "Mode ${MCP_MODE} requires phase=execute" "$MCP_MODE"
+      if [[ "$MCP_CONFIRMED" != "true" && "$(normalize_bool "${MCP_PARAMS[dry_run]:-${DRY_RUN}}")" != "true" ]]; then
+        emit_mcp_error "Confirmation required" "Execution requires --confirmed true unless dry_run=true" "$MCP_MODE"
+      fi
+      PHASE="$MCP_MODE"
+      DRY_RUN=$([[ "$(normalize_bool "${MCP_PARAMS[dry_run]:-${DRY_RUN}}")" == "true" ]] && printf '1' || printf '0')
+      if [[ -n "${MCP_PARAMS[env_file]:-}" ]]; then
+        ENV_FILE="${MCP_PARAMS[env_file]}"
+      fi
+      ;;
+    *)
+      emit_mcp_error "Unsupported mode" "Unknown mode: ${MCP_MODE}" "$MCP_MODE"
+      ;;
+  esac
+}
+
+parse_cli_args "$@"
+apply_mcp_adapter
 
 ########################################
 # Logging / formatting
