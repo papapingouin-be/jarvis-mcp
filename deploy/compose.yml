@@ -46,13 +46,14 @@ services:
       jarvis_tools_GITHUB_TOKEN: "${jarvis_tools_GITHUB_TOKEN:-}"
       jarvis_tools_GITHUB_IDENTITY: "${jarvis_tools_GITHUB_IDENTITY:-}"
       jarvis_tools_GITHUB_URL: "${jarvis_tools_GITHUB_URL:-}"
-      JARVIS_SCRIPT_RUNNER_SCRIPTS_ROOT: "${jarvis_tools_SCRIPT_RUNNER_SCRIPTS_ROOT:-/app/tools/scripts}"
-      JARVIS_SCRIPTS_ROOT: "${jarvis_tools_SCRIPTS_ROOT:-/app/tools/scripts}"
+      JARVIS_SCRIPT_RUNNER_SCRIPTS_ROOT: "${jarvis_tools_SCRIPT_RUNNER_SCRIPTS_ROOT:-/opt/jarvis/shared/scripts}"
+      JARVIS_SCRIPTS_ROOT: "${jarvis_tools_SCRIPTS_ROOT:-/opt/jarvis/shared/scripts}"
       JARVIS_SYNC_BUILD_REDEPLOY_SCRIPT: "${jarvis_tools_SYNC_BUILD_REDEPLOY_SCRIPT:-/app/tools/jarvis_sync_build_redeploy.sh}"
     ports:
       - "${jarvis_tools_PORT:-7010}:${jarvis_tools_PORT:-7010}"
     volumes:
       - /home/jarvis/tools:/opt/host-tools:ro
+      - ${jarvis_tools_SCRIPTS_HOST_PATH:-/opt/jarvis/shared/scripts}:/opt/jarvis/shared/scripts:ro
     networks:
       - jarvis_net
 

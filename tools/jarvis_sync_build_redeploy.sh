@@ -7,7 +7,7 @@ set -Eeuo pipefail
 # -> Mirror Gitea -> Portainer webhook -> Restart MCPO
 #
 # Improvements over V5.1:
-# - deploy tools/scripts to config-web/data/scripts
+# - deploy tools/scripts to a shared runtime scripts directory
 # - verify/fix remote permissions
 # - secret-safe logs
 # - MCP-ready summary
@@ -323,7 +323,7 @@ WEB_REMOTE_PATH="${WEB_REMOTE_PATH:-/opt/jarvis/config-web}"
 WEB_REMOTE_DELETE="${WEB_REMOTE_DELETE:-1}"
 
 SCRIPT_SOURCE_LOCAL_SUBDIR="${SCRIPT_SOURCE_LOCAL_SUBDIR:-tools/scripts}"
-SCRIPT_REMOTE_PATH="${SCRIPT_REMOTE_PATH:-/opt/jarvis/config-web/data/scripts}"
+SCRIPT_REMOTE_PATH="${SCRIPT_REMOTE_PATH:-/opt/jarvis/shared/scripts}"
 SCRIPT_REMOTE_DELETE="${SCRIPT_REMOTE_DELETE:-1}"
 SCRIPT_DIR_MODE="${SCRIPT_DIR_MODE:-755}"
 SCRIPT_FILE_MODE="${SCRIPT_FILE_MODE:-644}"
