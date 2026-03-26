@@ -40,7 +40,7 @@ $checks = [
         'label' => 'Scripts visibles sur disque',
         'ok' => count(scan_scripts()) > 0,
         'detail' => 'Nombre detecte : ' . count(scan_scripts()),
-        'action' => 'Verifier le montage volume vers /var/www/data/scripts',
+        'action' => 'Verifier le montage volume vers le dossier scripts configure',
     ],
 ];
 ?>

@@ -251,7 +251,9 @@ function script_env_grouped(PDO $pdo): array
 
 function scripts_root(): string
 {
-    return '/var/www/data/scripts';
+    return env_value('JARVIS_UI_SCRIPTS_ROOT')
+        ?: env_value('JARVIS_SCRIPTS_ROOT')
+        ?: '/var/www/data/scripts';
 }
 
 function safe_script_rel(string $rel): string
@@ -649,7 +651,9 @@ function build_cmd_from_file(string $fileName, string $phase, bool $confirmed, a
 function registry_run_json(string $mode, string $phase = 'collect', bool $confirmed = false, array $params = []): array
 {
     if (!registry_script_available()) {
-        throw new RuntimeException('Le script jarvis-script-registry.sh est introuvable dans /var/www/data/scripts.');
+        throw new RuntimeException(
+            'Le script jarvis-script-registry.sh est introuvable dans ' . scripts_root() . '.'
+        );
     }
 
     $runnerParams = registry_runner_params();

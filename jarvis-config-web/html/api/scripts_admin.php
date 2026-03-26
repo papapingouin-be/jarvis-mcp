@@ -85,7 +85,7 @@ $incompatibleScripts = array_values(array_filter(
   <?php endif; ?>
 
   <?php if (!registry_script_available()): ?>
-    <?= jarvis_render_notice('Le script <code>jarvis-script-registry.sh</code> est introuvable dans <code>/var/www/data/scripts</code>. Copie-le d abord sur la cible Linux.', 'error') ?>
+    <?= jarvis_render_notice('Le script <code>jarvis-script-registry.sh</code> est introuvable dans <code>' . h(scripts_root()) . '</code>. Copie-le d abord sur la cible Linux.', 'error') ?>
   <?php endif; ?>
 
   <div class="two">

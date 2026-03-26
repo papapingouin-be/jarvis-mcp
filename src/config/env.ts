@@ -180,7 +180,12 @@ export function getScriptRunnerEnvConfig(): {
 
   return {
     scriptsRoot: path.resolve(
-      firstNonEmptyValue("JARVIS_SCRIPT_RUNNER_SCRIPTS_ROOT", "jarvis_tools_SCRIPT_RUNNER_SCRIPTS_ROOT")
+      firstNonEmptyValue(
+        "JARVIS_SCRIPT_RUNNER_SCRIPTS_ROOT",
+        "jarvis_tools_SCRIPT_RUNNER_SCRIPTS_ROOT",
+        "JARVIS_SCRIPTS_ROOT",
+        "jarvis_tools_SCRIPTS_ROOT",
+      )
         ?? path.join(process.cwd(), "tools", "scripts")
     ),
     approvedScripts,

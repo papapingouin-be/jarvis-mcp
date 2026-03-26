@@ -224,10 +224,6 @@ is_registry_candidate() {
 
 list_candidate_script_paths() {
   local scripts_root="$1"
-  if [[ ! -d "$scripts_root" ]]; then
-    emit_json_error "Scripts directory not found" "Directory does not exist: ${scripts_root}" "${PARAMS[mode]:-unknown}"
-  fi
-
   find "$scripts_root" -maxdepth 1 -type f -print0 \
     | while IFS= read -r -d '' path; do
         if is_registry_candidate "$path"; then
@@ -426,6 +422,7 @@ scan_scripts_mode() {
   local array_file
 
   scripts_root="$(get_scripts_root)"
+  [[ -d "$scripts_root" ]] || emit_json_error "Scripts directory not found" "Directory does not exist: ${scripts_root}" "scan-scripts"
   ndjson_file="${TMP_DIR}/scan.ndjson"
   array_file="${TMP_DIR}/scan.json"
 
@@ -445,6 +442,7 @@ describe_script_mode() {
   local array_file
 
   scripts_root="$(get_scripts_root)"
+  [[ -d "$scripts_root" ]] || emit_json_error "Scripts directory not found" "Directory does not exist: ${scripts_root}" "describe-script"
   target_name="$(param_or_default script_name)"
   if [[ -z "$target_name" ]]; then
     emit_json_error "Missing parameter" "describe-script requires --param script_name=..." "describe-script"
@@ -599,6 +597,7 @@ diff_registry_mode() {
   local diff_file
 
   scripts_root="$(get_scripts_root)"
+  [[ -d "$scripts_root" ]] || emit_json_error "Scripts directory not found" "Directory does not exist: ${scripts_root}" "diff-registry"
   scan_ndjson_file="${TMP_DIR}/diff-scan.ndjson"
   scan_array_file="${TMP_DIR}/diff-scan.json"
   db_ndjson_file="${TMP_DIR}/diff-db.ndjson"
@@ -657,6 +656,7 @@ sync_registry_mode() {
   local errors_ndjson_file
 
   scripts_root="$(get_scripts_root)"
+  [[ -d "$scripts_root" ]] || emit_json_error "Scripts directory not found" "Directory does not exist: ${scripts_root}" "sync-registry"
   disable_missing="$(normalize_bool "$(param_or_default disable_missing false)")"
   dry_run="$(normalize_bool "$(param_or_default dry_run false)")"
 
@@ -887,6 +887,7 @@ validate_registry_mode() {
   local db_array_file
 
   scripts_root="$(get_scripts_root)"
+  [[ -d "$scripts_root" ]] || emit_json_error "Scripts directory not found" "Directory does not exist: ${scripts_root}" "validate-registry"
   scan_ndjson_file="${TMP_DIR}/validate-scan.ndjson"
   scan_array_file="${TMP_DIR}/validate-scan.json"
   db_ndjson_file="${TMP_DIR}/validate-db.ndjson"
