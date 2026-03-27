@@ -243,7 +243,7 @@ export async function describeScriptEnv(scriptName: string): Promise<{
         value: storedValues[metadata.name] ?? null,
         is_set: typeof storedValues[metadata.name] === "string",
       };
-    }))
+    })),
   };
 }
 
