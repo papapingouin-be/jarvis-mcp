@@ -27,7 +27,7 @@ function resolveToolPath(): string {
   return path.resolve(
     process.env.JARVIS_SYNC_BUILD_REDEPLOY_SCRIPT
       ?? process.env.jarvis_tools_SYNC_BUILD_REDEPLOY_SCRIPT
-      ?? path.join(process.cwd(), "tools", "jarvis_sync_build_redeploy.sh")
+      ?? path.join(process.cwd(), "tools", "scripts", "jarvis_sync_build_redeploy.sh")
   );
 }
 

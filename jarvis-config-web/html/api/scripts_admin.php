@@ -122,14 +122,14 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
                 <td><span class="status <?= $alreadyInstalled ? 'up' : 'warn' ?>"><?= $alreadyInstalled ? 'OUI' : 'NON' ?></span></td>
                 <td>
                   <div class="actions">
-                    <form method="post">
+                    <form method="post" data-async-fragment="scripts_admin">
                       <?= jarvis_csrf_input() ?>
                       <input type="hidden" name="form_action" value="install_script">
                       <input type="hidden" name="relative_path" value="<?= h($catalogScript) ?>">
                       <button class="secondary-btn" type="submit" <?= $alreadyInstalled ? 'disabled' : '' ?>>Installer</button>
                     </form>
                     <?php if ($alreadyInstalled): ?>
-                      <form method="post">
+                      <form method="post" data-async-fragment="scripts_admin">
                         <?= jarvis_csrf_input() ?>
                         <input type="hidden" name="form_action" value="install_script_overwrite">
                         <input type="hidden" name="relative_path" value="<?= h($catalogScript) ?>">
@@ -151,7 +151,7 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
         Le dry-run compare le disque et la DB sans ecriture.
         La synchronisation applique insertions, mises a jour, et desactivation optionnelle.
       </p>
-      <form method="post">
+      <form method="post" data-async-fragment="scripts_admin">
         <?= jarvis_csrf_input() ?>
         <p><label><input type="checkbox" name="disable_missing" value="1"> Desactiver en DB les scripts absents du disque</label></p>
         <div class="actions">
@@ -218,13 +218,13 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
             <td><span class="status <?= $found ? 'up' : 'down' ?>"><?= $found ? 'TROUVE' : 'MANQUANT' ?></span></td>
             <td>
               <div class="actions">
-                <form method="post">
+                <form method="post" data-async-fragment="scripts_admin">
                   <?= jarvis_csrf_input() ?>
                   <input type="hidden" name="form_action" value="toggle">
                   <input type="hidden" name="script_name" value="<?= h((string) $row['script_name']) ?>">
                   <button class="ghost-btn" type="submit"><?= ((bool) $row['is_active']) ? 'Desactiver' : 'Activer' ?></button>
                 </form>
-                <form method="post">
+                <form method="post" data-async-fragment="scripts_admin">
                   <?= jarvis_csrf_input() ?>
                   <input type="hidden" name="form_action" value="delete">
                   <input type="hidden" name="script_name" value="<?= h((string) $row['script_name']) ?>">

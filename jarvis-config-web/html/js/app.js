@@ -116,6 +116,42 @@ function bindSqlManualForm() {
   };
 }
 
+function bindAsyncFragmentForms() {
+  document.querySelectorAll("form[data-async-fragment]").forEach((form) => {
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+
+      const fragment = form.dataset.asyncFragment || "";
+      if (!fragment) {
+        return;
+      }
+
+      const submitter = event.submitter || null;
+      const body = new URLSearchParams(new FormData(form));
+      if (submitter?.name) {
+        body.set(submitter.name, submitter.value || "");
+      }
+
+      const content = document.getElementById("content");
+      if (content) {
+        content.innerHTML = "Chargement...";
+      }
+
+      const response = await fetch(`api/${fragment}.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      });
+
+      if (content) {
+        content.innerHTML = await response.text();
+      }
+
+      bind();
+    };
+  });
+}
+
 function renderScriptExample(example) {
   const notes = Array.isArray(example.notes)
     ? example.notes.map((note) => `<li>${note}</li>`).join("")
@@ -626,6 +662,7 @@ function bind() {
   bindCopyButtons();
   bindConfirmButtons();
   bindPrefillScriptButtons();
+  bindAsyncFragmentForms();
   bindSqlPreview();
   bindSqlManualForm();
   bindScriptsTestForm();

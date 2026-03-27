@@ -67,7 +67,7 @@ $discoveredScripts = is_array($scanPayload['scripts'] ?? null) ? $scanPayload['s
             <?php if (!registry_script_available()): ?>
                 <?= jarvis_render_notice('Le script <code>jarvis-script-registry.sh</code> est introuvable dans <code>' . h(scripts_root()) . '</code>.', 'error') ?>
             <?php else: ?>
-                <form method="post">
+                <form method="post" data-async-fragment="maintenance">
                     <?= jarvis_csrf_input() ?>
                     <p><label><input type="checkbox" name="disable_missing" value="1"> Desactiver en DB les scripts absents du disque</label></p>
                     <div class="actions">
