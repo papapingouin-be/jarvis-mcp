@@ -19,6 +19,7 @@ export type ScriptRunSuccess = {
 export type ScriptDefinition = {
   name: string;
   file_name: string;
+  version?: string;
   required_env: Array<ScriptEnvDefinition>;
   description?: string;
 };

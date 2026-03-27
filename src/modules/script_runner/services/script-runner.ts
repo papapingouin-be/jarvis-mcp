@@ -223,6 +223,7 @@ function toScriptSummary(script: ScriptDefinition): Record<string, unknown> {
   return {
     name: script.name,
     file_name: script.file_name,
+    version: script.version ?? null,
     description: script.description ?? null,
     required_env: script.required_env,
   };

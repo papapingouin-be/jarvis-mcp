@@ -140,6 +140,26 @@ function table_exists(PDO $pdo, string $table): bool
     return !empty($row['e']);
 }
 
+function column_exists(PDO $pdo, string $table, string $column): bool
+{
+    $statement = $pdo->prepare(
+        'select exists(
+            select 1
+            from information_schema.columns
+            where table_schema=current_schema()
+              and table_name=:t
+              and column_name=:c
+        ) as e'
+    );
+    $statement->execute([
+        't' => $table,
+        'c' => $column,
+    ]);
+    $row = $statement->fetch();
+
+    return !empty($row['e']);
+}
+
 function app_config_all(PDO $pdo): array
 {
     if (!table_exists($pdo, 'jarvis_app_config')) {
@@ -577,9 +597,62 @@ function script_service_validate(PDO $pdo, string $scriptName, string $serviceNa
 
 function registry_all(PDO $pdo): array
 {
+    $historyAvailable = table_exists($pdo, 'jarvis_script_registry_history');
+    $versionAvailable = column_exists($pdo, 'jarvis_script_registry', 'version');
+    $versionSelect = $versionAvailable ? "coalesce(r.version,'') as version" : "'' as version";
+
+    if ($historyAvailable) {
+        return $pdo->query(
+            "select r.script_name,r.file_name,{$versionSelect},coalesce(r.description,'') as description,r.required_env_json,r.is_active,r.updated_at,
+                    coalesce((select count(*) from jarvis_script_registry_history h where h.script_name = r.script_name), 0) as history_count,
+                    (select max(h.changed_at) from jarvis_script_registry_history h where h.script_name = r.script_name) as last_changed_at
+             from jarvis_script_registry r
+             order by r.script_name"
+        )->fetchAll();
+    }
+
     return $pdo->query(
-        "select script_name,file_name,coalesce(description,'') as description,required_env_json,is_active,updated_at from jarvis_script_registry order by script_name"
+        "select r.script_name,r.file_name,{$versionSelect},coalesce(r.description,'') as description,r.required_env_json,r.is_active,r.updated_at,
+                0 as history_count,
+                null::timestamptz as last_changed_at
+         from jarvis_script_registry r
+         order by r.script_name"
     )->fetchAll();
+}
+
+function registry_history(PDO $pdo, ?string $scriptName = null, int $limit = 100): array
+{
+    if (!table_exists($pdo, 'jarvis_script_registry_history')) {
+        return [];
+    }
+
+    $limit = max(1, min(500, $limit));
+
+    if ($scriptName === null) {
+        $statement = $pdo->prepare(
+            'select id,script_name,change_type,coalesce(version,\'\') as version,file_name,coalesce(description,\'\') as description,required_env_json,is_active,changed_at
+             from jarvis_script_registry_history
+             order by changed_at desc, id desc
+             limit :l'
+        );
+        $statement->bindValue(':l', $limit, PDO::PARAM_INT);
+        $statement->execute();
+
+        return $statement->fetchAll();
+    }
+
+    $statement = $pdo->prepare(
+        'select id,script_name,change_type,coalesce(version,\'\') as version,file_name,coalesce(description,\'\') as description,required_env_json,is_active,changed_at
+         from jarvis_script_registry_history
+         where script_name=:n
+         order by changed_at desc, id desc
+         limit :l'
+    );
+    $statement->bindValue(':n', $scriptName);
+    $statement->bindValue(':l', $limit, PDO::PARAM_INT);
+    $statement->execute();
+
+    return $statement->fetchAll();
 }
 
 function registry_exists(PDO $pdo, string $name): bool

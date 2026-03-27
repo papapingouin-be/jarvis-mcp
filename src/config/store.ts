@@ -9,7 +9,9 @@ type AppConfigRow = {
 type ScriptRegistryRow = {
   script_name: string;
   file_name: string;
+  version: unknown;
   required_env_json: unknown;
+  metadata_json: unknown;
   description: unknown;
 };
 
@@ -73,6 +75,7 @@ function toScriptDefinition(row: ScriptRegistryRow): ScriptDefinition {
   return {
     name: row.script_name,
     file_name: row.file_name,
+    version: toOptionalString(row.version),
     required_env: parseScriptEnvDefinitions(row.required_env_json),
     description: toOptionalString(row.description),
   };
@@ -91,7 +94,9 @@ export async function runConfigStoreMigrations(db: DatabaseClient): Promise<void
     CREATE TABLE IF NOT EXISTS jarvis_script_registry (
       script_name VARCHAR(128) PRIMARY KEY,
       file_name VARCHAR(255) NOT NULL,
+      version VARCHAR(64) NULL,
       required_env_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+      metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       description TEXT NULL,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -99,6 +104,23 @@ export async function runConfigStoreMigrations(db: DatabaseClient): Promise<void
   `);
 
   await db.query("ALTER TABLE jarvis_script_registry ADD COLUMN IF NOT EXISTS description TEXT NULL");
+  await db.query("ALTER TABLE jarvis_script_registry ADD COLUMN IF NOT EXISTS version VARCHAR(64) NULL");
+  await db.query("ALTER TABLE jarvis_script_registry ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb");
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS jarvis_script_registry_history (
+      id BIGSERIAL PRIMARY KEY,
+      script_name VARCHAR(128) NOT NULL,
+      change_type VARCHAR(32) NOT NULL,
+      version VARCHAR(64) NULL,
+      file_name VARCHAR(255) NOT NULL,
+      description TEXT NULL,
+      required_env_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+      metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS jarvis_script_env_values (
@@ -118,6 +140,11 @@ export async function runConfigStoreMigrations(db: DatabaseClient): Promise<void
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_jarvis_script_env_values_script
     ON jarvis_script_env_values(script_name, env_name)
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_jarvis_script_registry_history_script
+    ON jarvis_script_registry_history(script_name, changed_at DESC)
   `);
 }
 
@@ -170,7 +197,7 @@ export class ScriptRegistryRepository {
   async listActive(): Promise<ScriptRegistry> {
     const rows = await this.db.query<ScriptRegistryRow>(
       `
-      SELECT script_name, file_name, required_env_json, description
+      SELECT script_name, file_name, version, required_env_json, metadata_json, description
       FROM jarvis_script_registry
       WHERE is_active = TRUE
       ORDER BY script_name ASC
@@ -196,19 +223,56 @@ export class ScriptRegistryRepository {
     }
 
     for (const definition of Object.values(defaults)) {
+      const metadataJson = JSON.stringify({
+        script_name: definition.name,
+        file_name: definition.file_name,
+        version: definition.version ?? "",
+        description: definition.description ?? "",
+        required_env: definition.required_env,
+      });
+
       await this.db.query(
         `
-        INSERT INTO jarvis_script_registry (script_name, file_name, required_env_json, description, is_active, updated_at)
-        VALUES ($1, $2, $3::jsonb, $4, TRUE, NOW())
+        INSERT INTO jarvis_script_registry (script_name, file_name, version, required_env_json, metadata_json, description, is_active, updated_at)
+        VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, TRUE, NOW())
         ON CONFLICT (script_name)
         DO UPDATE SET
           file_name = EXCLUDED.file_name,
+          version = EXCLUDED.version,
           required_env_json = EXCLUDED.required_env_json,
+          metadata_json = EXCLUDED.metadata_json,
           description = EXCLUDED.description,
           is_active = TRUE,
           updated_at = NOW()
         `,
-        [definition.name, definition.file_name, JSON.stringify(definition.required_env), definition.description ?? null]
+        [
+          definition.name,
+          definition.file_name,
+          definition.version ?? null,
+          JSON.stringify(definition.required_env),
+          metadataJson,
+          definition.description ?? null,
+        ]
+      );
+
+      await this.db.query(
+        `
+        INSERT INTO jarvis_script_registry_history (
+          script_name, change_type, version, file_name, description, required_env_json, metadata_json, is_active, changed_at
+        )
+        SELECT $1, 'seed', $2, $3, $4, $5::jsonb, $6::jsonb, TRUE, NOW()
+        WHERE NOT EXISTS (
+          SELECT 1 FROM jarvis_script_registry_history WHERE script_name = $1
+        )
+        `,
+        [
+          definition.name,
+          definition.version ?? null,
+          definition.file_name,
+          definition.description ?? null,
+          JSON.stringify(definition.required_env),
+          metadataJson,
+        ]
       );
     }
   }

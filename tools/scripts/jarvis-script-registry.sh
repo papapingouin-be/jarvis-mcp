@@ -158,6 +158,41 @@ sql_escape() {
   printf '%s' "$value"
 }
 
+build_history_insert_sql() {
+  local script_name="$1"
+  local change_type="$2"
+  local version="$3"
+  local file_name="$4"
+  local description="$5"
+  local required_env_json="$6"
+  local metadata_json="$7"
+  local is_active="$8"
+
+  cat <<EOF
+INSERT INTO jarvis_script_registry_history (
+  script_name,
+  change_type,
+  version,
+  file_name,
+  description,
+  required_env_json,
+  metadata_json,
+  is_active,
+  changed_at
+) VALUES (
+  '$(sql_escape "$script_name")',
+  '$(sql_escape "$change_type")',
+  $(if [[ -n "$version" ]]; then printf "'%s'" "$(sql_escape "$version")"; else printf 'NULL'; fi),
+  '$(sql_escape "$file_name")',
+  '$(sql_escape "$description")',
+  '$(sql_escape "$required_env_json")'::jsonb,
+  '$(sql_escape "$metadata_json")'::jsonb,
+  ${is_active},
+  NOW()
+);
+EOF
+}
+
 require_db_prerequisites() {
   require_command psql
 }
@@ -208,6 +243,30 @@ assert_registry_table_exists() {
   if [[ "$exists" != "jarvis_script_registry" ]]; then
     emit_json_error "Missing table" "Table public.jarvis_script_registry does not exist" "${PARAMS[mode]:-unknown}"
   fi
+}
+
+ensure_registry_schema() {
+  assert_registry_table_exists
+  run_psql_query "
+    ALTER TABLE jarvis_script_registry ADD COLUMN IF NOT EXISTS version VARCHAR(64) NULL;
+    ALTER TABLE jarvis_script_registry ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+    CREATE TABLE IF NOT EXISTS jarvis_script_registry_history (
+      id BIGSERIAL PRIMARY KEY,
+      script_name VARCHAR(128) NOT NULL,
+      change_type VARCHAR(32) NOT NULL,
+      version VARCHAR(64) NULL,
+      file_name VARCHAR(255) NOT NULL,
+      description TEXT NULL,
+      required_env_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+      metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_jarvis_script_registry_history_script
+    ON jarvis_script_registry_history(script_name, changed_at DESC);
+  " >/dev/null
 }
 
 get_scripts_root() {
@@ -481,14 +540,17 @@ describe_script_mode() {
 
 fetch_db_registry_to_file() {
   local output_file="$1"
-  assert_registry_table_exists
+  ensure_registry_schema
   run_psql_query "
     SELECT jsonb_build_object(
       'script_name', script_name,
       'file_name', file_name,
+      'version', COALESCE(version, ''),
       'description', COALESCE(description, ''),
       'required_env_json', required_env_json,
+      'metadata_json', COALESCE(metadata_json, '{}'::jsonb),
       'is_active', is_active,
+      'history_count', COALESCE((SELECT COUNT(*) FROM jarvis_script_registry_history h WHERE h.script_name = jarvis_script_registry.script_name), 0),
       'updated_at', to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
     )::text
     FROM jarvis_script_registry
@@ -511,12 +573,13 @@ build_diff_payload_file() {
         | map({
             script_name: .metadata.script_name,
             file_name: .metadata.file_name,
+            version: (.metadata.version // ""),
             description: (.metadata.description // ""),
             required_env_json: (.metadata.required_env // []),
+            metadata_json: .metadata,
             services: (.metadata.services // []),
             tags: (.metadata.tags // []),
             capabilities: (.metadata.capabilities // []),
-            version: (.metadata.version // ""),
             path: .path,
             registry_compatible: true
           }));
@@ -536,8 +599,10 @@ build_diff_payload_file() {
         differences: (
           [
             if $disk.file_name != $row.file_name then "file_name" else empty end,
+            if ($disk.version // "") != ($row.version // "") then "version" else empty end,
             if ($disk.description // "") != ($row.description // "") then "description" else empty end,
             if (($disk.required_env_json // []) | tojson) != (($row.required_env_json // []) | tojson) then "required_env_json" else empty end,
+            if (($disk.metadata_json // {}) | tojson) != (($row.metadata_json // {}) | tojson) then "metadata_json" else empty end,
             if (($row.is_active // true) != true) then "is_active" else empty end
           ]
         )
@@ -558,8 +623,10 @@ build_diff_payload_file() {
         | map(select((db_by_name[.] != null) and (disk_by_name[.] != null)))
         | map(select(
             (disk_by_name[.].file_name != db_by_name[.].file_name)
+            or ((disk_by_name[.].version // "") != (db_by_name[.].version // ""))
             or ((disk_by_name[.].description // "") != (db_by_name[.].description // ""))
             or (((disk_by_name[.].required_env_json // []) | tojson) != ((db_by_name[.].required_env_json // []) | tojson))
+            or (((disk_by_name[.].metadata_json // {}) | tojson) != ((db_by_name[.].metadata_json // {}) | tojson))
             or ((db_by_name[.].is_active // true) != true)
           ))
         | map(changed_entry(disk_by_name[.]; db_by_name[.]))
@@ -569,8 +636,10 @@ build_diff_payload_file() {
         | map(select((db_by_name[.] != null) and (disk_by_name[.] != null)))
         | map(select(
             (disk_by_name[.].file_name == db_by_name[.].file_name)
+            and ((disk_by_name[.].version // "") == (db_by_name[.].version // ""))
             and ((disk_by_name[.].description // "") == (db_by_name[.].description // ""))
             and (((disk_by_name[.].required_env_json // []) | tojson) == ((db_by_name[.].required_env_json // []) | tojson))
+            and (((disk_by_name[.].metadata_json // {}) | tojson) == ((db_by_name[.].metadata_json // {}) | tojson))
             and ((db_by_name[.].is_active // true) == true)
           ))
         | map({
@@ -698,16 +767,20 @@ sync_registry_mode() {
 
     local script_name
     local file_name
+    local version
     local description
     local required_env_json
+    local metadata_json
     local exists_in_db
     local needs_update
     local upsert_sql
 
     script_name="$(jq -r '.metadata.script_name' <<<"$compatible_entry")"
     file_name="$(jq -r '.metadata.file_name' <<<"$compatible_entry")"
+    version="$(jq -r '.metadata.version // ""' <<<"$compatible_entry")"
     description="$(jq -r '.metadata.description // ""' <<<"$compatible_entry")"
     required_env_json="$(jq -cS '.metadata.required_env // []' <<<"$compatible_entry")"
+    metadata_json="$(jq -cS '.metadata' <<<"$compatible_entry")"
 
     exists_in_db="$(jq -r --arg name "$script_name" 'map(select(.script_name == $name)) | length' "$db_array_file")"
     needs_update="$(
@@ -723,8 +796,10 @@ sync_registry_mode() {
           else
             (
               ($disk.metadata.file_name != $row.file_name)
+              or (($disk.metadata.version // "") != ($row.version // ""))
               or (($disk.metadata.description // "") != ($row.description // ""))
               or (((($disk.metadata.required_env // []) | tojson)) != ((($row.required_env_json // []) | tojson)))
+              or (((($disk.metadata // {}) | tojson)) != ((($row.metadata_json // {}) | tojson)))
               or (($row.is_active // true) != true)
             )
           end
@@ -737,18 +812,23 @@ sync_registry_mode() {
           INSERT INTO jarvis_script_registry (
             script_name,
             file_name,
+            version,
             description,
             required_env_json,
+            metadata_json,
             is_active,
             updated_at
           ) VALUES (
             '$(sql_escape "$script_name")',
             '$(sql_escape "$file_name")',
+            $(if [[ -n "$version" ]]; then printf "'%s'" "$(sql_escape "$version")"; else printf 'NULL'; fi),
             '$(sql_escape "$description")',
             '$(sql_escape "$required_env_json")'::jsonb,
+            '$(sql_escape "$metadata_json")'::jsonb,
             TRUE,
             NOW()
           );
+          $(build_history_insert_sql "$script_name" "insert" "$version" "$file_name" "$description" "$required_env_json" "$metadata_json" "TRUE")
         "
         if ! run_psql_query "$upsert_sql" >/dev/null; then
           jq -n \
@@ -764,9 +844,10 @@ sync_registry_mode() {
       jq -n \
         --arg script_name "$script_name" \
         --arg file_name "$file_name" \
+        --arg version "$version" \
         --arg description "$description" \
         --argjson required_env_json "$required_env_json" \
-        '{script_name: $script_name, file_name: $file_name, description: $description, required_env_json: $required_env_json}' \
+        '{script_name: $script_name, file_name: $file_name, version: $version, description: $description, required_env_json: $required_env_json}' \
         >>"$inserted_ndjson_file"
       continue
     fi
@@ -777,11 +858,14 @@ sync_registry_mode() {
           UPDATE jarvis_script_registry
           SET
             file_name = '$(sql_escape "$file_name")',
+            version = $(if [[ -n "$version" ]]; then printf "'%s'" "$(sql_escape "$version")"; else printf 'NULL'; fi),
             description = '$(sql_escape "$description")',
             required_env_json = '$(sql_escape "$required_env_json")'::jsonb,
+            metadata_json = '$(sql_escape "$metadata_json")'::jsonb,
             is_active = TRUE,
             updated_at = NOW()
           WHERE script_name = '$(sql_escape "$script_name")';
+          $(build_history_insert_sql "$script_name" "update" "$version" "$file_name" "$description" "$required_env_json" "$metadata_json" "TRUE")
         "
         if ! run_psql_query "$upsert_sql" >/dev/null; then
           jq -n \
@@ -797,16 +881,18 @@ sync_registry_mode() {
       jq -n \
         --arg script_name "$script_name" \
         --arg file_name "$file_name" \
+        --arg version "$version" \
         --arg description "$description" \
         --argjson required_env_json "$required_env_json" \
-        '{script_name: $script_name, file_name: $file_name, description: $description, required_env_json: $required_env_json}' \
+        '{script_name: $script_name, file_name: $file_name, version: $version, description: $description, required_env_json: $required_env_json}' \
         >>"$updated_ndjson_file"
       continue
     fi
 
     jq -n \
       --arg script_name "$script_name" \
-      '{script_name: $script_name}' \
+      --arg version "$version" \
+      '{script_name: $script_name, version: $version}' \
       >>"$unchanged_ndjson_file"
   done <"$compatible_ndjson_file"
 
@@ -818,12 +904,24 @@ sync_registry_mode() {
       missing_script_name="$(jq -r '.script_name' <<<"$missing_entry")"
 
       if [[ "$dry_run" != "true" ]]; then
+        local disable_snapshot
+        disable_snapshot="$(jq -cS --arg name "$missing_script_name" 'map(select(.script_name == $name)) | .[0] // {}' "$db_array_file")"
+
         if ! run_psql_query "
           UPDATE jarvis_script_registry
           SET
             is_active = FALSE,
             updated_at = NOW()
           WHERE script_name = '$(sql_escape "$missing_script_name")';
+          $(build_history_insert_sql \
+            "$missing_script_name" \
+            "disable" \
+            "$(jq -r '.version // ""' <<<"$disable_snapshot")" \
+            "$(jq -r '.file_name // ""' <<<"$disable_snapshot")" \
+            "$(jq -r '.description // ""' <<<"$disable_snapshot")" \
+            "$(jq -cS '.required_env_json // []' <<<"$disable_snapshot")" \
+            "$(jq -cS '.metadata_json // {}' <<<"$disable_snapshot")" \
+            "FALSE")
         " >/dev/null; then
           jq -n \
             --arg script_name "$missing_script_name" \
@@ -835,7 +933,11 @@ sync_registry_mode() {
         fi
       fi
 
-      jq -n --arg script_name "$missing_script_name" '{script_name: $script_name}' >>"$disabled_ndjson_file"
+      jq -n \
+        --arg script_name "$missing_script_name" \
+        --arg version "$(jq -r --arg name "$missing_script_name" 'map(select(.script_name == $name)) | .[0].version // ""' "$db_array_file")" \
+        '{script_name: $script_name, version: $version}' \
+        >>"$disabled_ndjson_file"
     done < <(jq -c '.missing_on_disk[]' "$diff_file")
   fi
 
@@ -953,6 +1055,19 @@ validate_registry_mode() {
               file_name: .file_name
             })
         ),
+        scripts_without_history: (
+          compatible_scan
+          | map(. as $disk_row
+            | ($disk_row.metadata.script_name as $name
+              | (($db[0] // []) | map(select(.script_name == $name)) | .[0]) as $db_row
+              | select($db_row != null and (($db_row.history_count // 0) == 0))
+            )
+          )
+          | map({
+              script_name: .metadata.script_name,
+              file_name: .file_name
+            })
+        ),
         required_env_malformed: (
           compatible_scan
           | map(select(
@@ -977,7 +1092,8 @@ validate_registry_mode() {
         ((.diagnostics.duplicate_disk_script_names | length) | tostring) + " duplicate disk names, "
         + ((.diagnostics.duplicate_db_file_names | length) | tostring) + " duplicate db file names, "
         + ((.diagnostics.files_missing_on_disk | length) | tostring) + " files missing on disk, "
-        + ((.diagnostics.scripts_without_registry_metadata | length) | tostring) + " incompatible metadata"
+        + ((.diagnostics.scripts_without_registry_metadata | length) | tostring) + " incompatible metadata, "
+        + ((.diagnostics.scripts_without_history | length) | tostring) + " without history"
       )
     '
 }
@@ -1082,7 +1198,9 @@ self_doc_mode() {
           "registry-doc-consumer",
           "postgres-diff",
           "postgres-sync",
-          "registry-validation"
+          "registry-validation",
+          "registry-versioning",
+          "registry-history"
         ],
         tags: [
           "jarvis",

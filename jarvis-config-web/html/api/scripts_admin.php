@@ -190,7 +190,9 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
         <tr>
           <th>script_name</th>
           <th>file_name</th>
+          <th>version</th>
           <th>description</th>
+          <th>history</th>
           <th>required_env_json</th>
           <th>actif</th>
           <th>fichier</th>
@@ -203,7 +205,14 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
           <tr>
             <td><strong><?= h((string) $row['script_name']) ?></strong></td>
             <td><code><?= h((string) $row['file_name']) ?></code></td>
+            <td><code><?= h((string) ($row['version'] ?? '')) ?></code></td>
             <td><?= h((string) $row['description']) ?></td>
+            <td>
+              <?= h((string) ($row['history_count'] ?? '0')) ?>
+              <?php if (!empty($row['last_changed_at'])): ?>
+                <div><small><?= h((string) $row['last_changed_at']) ?></small></div>
+              <?php endif; ?>
+            </td>
             <td><pre><?= h((string) $row['required_env_json']) ?></pre></td>
             <td><span class="status <?= ((bool) $row['is_active']) ? 'up' : 'warn' ?>"><?= ((bool) $row['is_active']) ? 'YES' : 'NO' ?></span></td>
             <td><span class="status <?= $found ? 'up' : 'down' ?>"><?= $found ? 'TROUVE' : 'MANQUANT' ?></span></td>

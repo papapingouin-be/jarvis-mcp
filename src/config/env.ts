@@ -9,6 +9,7 @@ export type TransportMode = "stdio" | "http";
 type ScriptRegistryInput = Record<string, {
   name?: string;
   file_name?: string;
+  version?: string;
   required_env?: Array<InputScriptEnvDefinition>;
   description?: string;
 }>;
@@ -27,6 +28,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "proxmox-CTDEV.sh": {
     name: "proxmox-CTDEV.sh",
     file_name: "proxmox-CTDEV.sh",
+    version: "1.0.0",
     required_env: [
       "PROXMOX_HOST",
       "PROXMOX_WEB",
@@ -41,12 +43,14 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "proxmox-diagnose.sh": {
     name: "proxmox-diagnose.sh",
     file_name: "proxmox-diagnose.sh",
+    version: "1.0.0",
     required_env: [],
     description: "Diagnostic et orchestration Proxmox via SSH, avec modes collect, preflight et gestion CT.",
   },
   "jarvis_sync_build_redeploy.sh": {
     name: "jarvis_sync_build_redeploy.sh",
     file_name: "jarvis_sync_build_redeploy.sh",
+    version: "1.0.0",
     required_env: [
       {
         name: "jarvis_tools_GITHUB_TOKEN",
@@ -164,6 +168,7 @@ function toScriptDefinition(name: string, input: ScriptDefinition | ScriptRegist
   return {
     name: input.name ?? name,
     file_name: input.file_name ?? name,
+    version: typeof input.version === "string" && input.version.trim().length > 0 ? input.version.trim() : undefined,
     required_env: Array.isArray(input.required_env) ? normalizeScriptEnvDefinitions(input.required_env) : [],
     description: typeof input.description === "string" && input.description.trim().length > 0
       ? input.description.trim()
