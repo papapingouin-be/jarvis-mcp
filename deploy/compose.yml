@@ -49,6 +49,7 @@ services:
       JARVIS_SCRIPT_RUNNER_SCRIPTS_ROOT: "${jarvis_tools_SCRIPT_RUNNER_SCRIPTS_ROOT:-/opt/jarvis/shared/scripts}"
       JARVIS_SCRIPTS_ROOT: "${jarvis_tools_SCRIPTS_ROOT:-/opt/jarvis/shared/scripts}"
       JARVIS_SYNC_BUILD_REDEPLOY_SCRIPT: "${jarvis_tools_SYNC_BUILD_REDEPLOY_SCRIPT:-/app/tools/jarvis_sync_build_redeploy.sh}"
+      RESTART_STRATEGY: "${jarvis_tools_RESTART_STRATEGY:-webhook}"
     ports:
       - "${jarvis_tools_PORT:-7010}:${jarvis_tools_PORT:-7010}"
     volumes:

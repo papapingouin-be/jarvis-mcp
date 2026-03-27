@@ -524,20 +524,6 @@ set +a
 # Required env vars
 ########################################
 
-: "${jarvis_tools_GITHUB_TOKEN:?Variable manquante: jarvis_tools_GITHUB_TOKEN}"
-: "${jarvis_tools_GITEA_TOKEN:?Variable manquante: jarvis_tools_GITEA_TOKEN}"
-: "${JARVIS_LOCAL_REPO:?Variable manquante: JARVIS_LOCAL_REPO}"
-: "${JARVIS_MIRROR_SCRIPT:?Variable manquante: JARVIS_MIRROR_SCRIPT}"
-: "${JARVIS_TOOLS_WEBHOOK_URL:?Variable manquante: JARVIS_TOOLS_WEBHOOK_URL}"
-: "${JARVIS_MCPO_CONTAINER_NAME:?Variable manquante: JARVIS_MCPO_CONTAINER_NAME}"
-
-: "${JARVIS_srv_SSH:?Variable manquante: JARVIS_srv_SSH}"
-: "${JARVIS_srv_USER:?Variable manquante: JARVIS_srv_USER}"
-
-########################################
-# Default params
-########################################
-
 JARVIS_BRANCH="${JARVIS_BRANCH:-main}"
 
 NPM_INSTALL_CMD="${NPM_INSTALL_CMD:-npm ci}"
@@ -561,6 +547,7 @@ SCRIPT_DIR_MODE="${SCRIPT_DIR_MODE:-755}"
 SCRIPT_FILE_MODE="${SCRIPT_FILE_MODE:-644}"
 
 PORTAINER_USE_STACK_WEBHOOK="${PORTAINER_USE_STACK_WEBHOOK:-1}"
+RESTART_STRATEGY="${RESTART_STRATEGY:-webhook}"
 
 USE_SUDO="${USE_SUDO:-1}"
 
@@ -571,6 +558,33 @@ USE_SUDO="${USE_SUDO:-1}"
 phase_enabled() {
   local wanted="$1"
   [[ "$PHASE" == "all" || "$PHASE" == "$wanted" ]]
+}
+
+require_env_for_selected_phases() {
+  local env_name="$1"
+  local value="$2"
+  shift 2
+  local candidate_phase
+
+  for candidate_phase in "$@"; do
+    if phase_enabled "$candidate_phase"; then
+      [[ -n "$value" ]] || die "Variable manquante: $env_name" "$EXIT_ENV"
+      return 0
+    fi
+  done
+}
+
+command_required_for_selected_phases() {
+  local command_name="$1"
+  shift
+  local candidate_phase
+
+  for candidate_phase in "$@"; do
+    if phase_enabled "$candidate_phase"; then
+      need_cmd "$command_name"
+      return 0
+    fi
+  done
 }
 
 docker_cmd() {
@@ -788,6 +802,20 @@ docker_restart_container() {
   run docker_cmd restart "$container_name"
 }
 
+restart_runtime() {
+  case "$RESTART_STRATEGY" in
+    webhook|portainer-webhook)
+      trigger_webhook "$JARVIS_TOOLS_WEBHOOK_URL"
+      ;;
+    docker)
+      docker_restart_container "$JARVIS_MCPO_CONTAINER_NAME"
+      ;;
+    *)
+      die "Strategie de restart inconnue: $RESTART_STRATEGY" "$EXIT_DOCKER"
+      ;;
+  esac
+}
+
 run_npm_install_phase() {
   local err_file ci_rc=0
 
@@ -833,19 +861,36 @@ run_npm_install_phase() {
 
 step_start "prechecks"
 
+require_env_for_selected_phases JARVIS_LOCAL_REPO "${JARVIS_LOCAL_REPO:-}" all sync install build deploy-web deploy-scripts
+require_env_for_selected_phases JARVIS_MIRROR_SCRIPT "${JARVIS_MIRROR_SCRIPT:-}" all mirror
+require_env_for_selected_phases jarvis_tools_GITHUB_TOKEN "${jarvis_tools_GITHUB_TOKEN:-}" all sync mirror
+require_env_for_selected_phases jarvis_tools_GITEA_TOKEN "${jarvis_tools_GITEA_TOKEN:-}" all mirror
+require_env_for_selected_phases JARVIS_TOOLS_WEBHOOK_URL "${JARVIS_TOOLS_WEBHOOK_URL:-}" all webhook
+require_env_for_selected_phases JARVIS_srv_SSH "${JARVIS_srv_SSH:-}" all deploy-web deploy-scripts
+require_env_for_selected_phases JARVIS_srv_USER "${JARVIS_srv_USER:-}" all deploy-web deploy-scripts
+if [[ "$RESTART_STRATEGY" == "webhook" || "$RESTART_STRATEGY" == "portainer-webhook" ]]; then
+  require_env_for_selected_phases JARVIS_TOOLS_WEBHOOK_URL "${JARVIS_TOOLS_WEBHOOK_URL:-}" all restart
+fi
+
 need_cmd git
 need_cmd npm
 need_cmd curl
 need_cmd bash
-need_cmd ssh
-need_cmd rsync
 need_cmd python3
-need_cmd docker
+need_cmd jq
+command_required_for_selected_phases ssh all deploy-web deploy-scripts
+command_required_for_selected_phases rsync all deploy-web deploy-scripts
+if [[ "$RESTART_STRATEGY" == "docker" ]]; then
+  command_required_for_selected_phases docker all restart
+  : "${JARVIS_MCPO_CONTAINER_NAME:?Variable manquante: JARVIS_MCPO_CONTAINER_NAME}"
+fi
 
 [[ -d "$JARVIS_LOCAL_REPO/.git" ]] || die "Repo local introuvable: $JARVIS_LOCAL_REPO/.git" "$EXIT_ENV"
 [[ -x "$JARVIS_MIRROR_SCRIPT" ]] || die "Script mirror introuvable ou non exécutable: $JARVIS_MIRROR_SCRIPT" "$EXIT_ENV"
 
-detect_ssh_auth_mode
+if phase_enabled "all" || phase_enabled "deploy-web" || phase_enabled "deploy-scripts"; then
+  detect_ssh_auth_mode
+fi
 
 info "ENV_FILE                    = $ENV_FILE"
 info "LOG_FILE                    = $LOG_FILE"
@@ -871,6 +916,7 @@ info "JARVIS_srv_SSH              = $JARVIS_srv_SSH"
 info "JARVIS_srv_USER             = $JARVIS_srv_USER"
 info "SSH_AUTH_MODE               = $SSH_AUTH_MODE"
 info "PORTAINER_USE_STACK_WEBHOOK = $PORTAINER_USE_STACK_WEBHOOK"
+info "RESTART_STRATEGY            = $RESTART_STRATEGY"
 info "NPM_INSTALL_CMD             = $NPM_INSTALL_CMD"
 info "NPM_BUILD_CMD               = $NPM_BUILD_CMD"
 info "NPM_ALLOW_FALLBACK_INSTALL  = $NPM_ALLOW_FALLBACK_INSTALL"
@@ -1028,7 +1074,7 @@ fi
 
 if phase_enabled "restart"; then
   step_start "restart"
-  docker_restart_container "$JARVIS_MCPO_CONTAINER_NAME"
+  restart_runtime
   step_ok "Redémarrage MCPO OK"
 fi
 
