@@ -22,6 +22,10 @@ ENV_FILE_DEFAULT="$SCRIPT_DIR/.env"
 LOG_DIR_DEFAULT="$SCRIPT_DIR/logs"
 SUMMARY_DIR_DEFAULT="$SCRIPT_DIR/logs"
 
+ENV_FILE_EXPLICIT=0
+if [[ -n "${ENV_FILE:-}" ]]; then
+  ENV_FILE_EXPLICIT=1
+fi
 ENV_FILE="${ENV_FILE:-$ENV_FILE_DEFAULT}"
 LOG_DIR="${LOG_DIR:-$LOG_DIR_DEFAULT}"
 SUMMARY_DIR="${SUMMARY_DIR:-$SUMMARY_DIR_DEFAULT}"
@@ -216,14 +220,14 @@ self_doc_json() {
     "version":"1.0.0",
     "supports_registry":true,
     "required_env":[
-      {"name":"jarvis_tools_GITHUB_TOKEN","required":true,"secret":true,"description":"GitHub token used for sync and mirror."},
-      {"name":"jarvis_tools_GITEA_TOKEN","required":true,"secret":true,"description":"Gitea token used for mirror."},
-      {"name":"JARVIS_LOCAL_REPO","required":true,"secret":false,"description":"Local repository path."},
-      {"name":"JARVIS_MIRROR_SCRIPT","required":true,"secret":false,"description":"Mirror helper script path."},
-      {"name":"JARVIS_TOOLS_WEBHOOK_URL","required":true,"secret":true,"description":"Portainer webhook URL."},
-      {"name":"JARVIS_MCPO_CONTAINER_NAME","required":true,"secret":false,"description":"MCPO container name."},
-      {"name":"JARVIS_srv_SSH","required":true,"secret":false,"description":"SSH host and port for deploy target."},
-      {"name":"JARVIS_srv_USER","required":true,"secret":false,"description":"SSH user for deploy target."}
+      {"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},
+      {"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},
+      {"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},
+      {"name":"JARVIS_MIRROR_SCRIPT","required":false,"secret":false,"description":"Mirror helper script path."},
+      {"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},
+      {"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},
+      {"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},
+      {"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."}
     ],
     "services":%s,
     "capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],
@@ -245,7 +249,7 @@ self_doc_json() {
 registry_doc_json() {
   local file_name
   file_name="$(basename "${BASH_SOURCE[0]}")"
-  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.0.0","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":true,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":true,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":true,"secret":false,"description":"Local repository path."},{"name":"JARVIS_MIRROR_SCRIPT","required":true,"secret":false,"description":"Mirror helper script path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":true,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":true,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":true,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":true,"secret":false,"description":"SSH user for deploy target."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
+  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.0.0","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_MIRROR_SCRIPT","required":false,"secret":false,"description":"Mirror helper script path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.")" \
@@ -284,6 +288,7 @@ parse_cli_args() {
         shift
         [[ $# -gt 0 ]] || emit_mcp_error "Invalid argument" "--env requires a file path" "argument-parse"
         ENV_FILE="$1"
+        ENV_FILE_EXPLICIT=1
         ;;
       --dry-run)
         DRY_RUN=1
@@ -333,6 +338,7 @@ apply_mcp_adapter() {
       DRY_RUN=$([[ "$(normalize_bool "${MCP_PARAMS[dry_run]:-${DRY_RUN}}")" == "true" ]] && printf '1' || printf '0')
       if [[ -n "${MCP_PARAMS[env_file]:-}" ]]; then
         ENV_FILE="${MCP_PARAMS[env_file]}"
+        ENV_FILE_EXPLICIT=1
       fi
       ;;
     *)
@@ -514,12 +520,16 @@ fi
 # Load env
 ########################################
 
-[[ -f "$ENV_FILE" ]] || die "Fichier .env introuvable : $ENV_FILE" "$EXIT_ENV"
-
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+ENV_SOURCE="process-env"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  ENV_SOURCE="$ENV_FILE"
+elif [[ "$ENV_FILE_EXPLICIT" == "1" ]]; then
+  die "Fichier .env introuvable : $ENV_FILE" "$EXIT_ENV"
+fi
 
 ########################################
 # Required env vars
@@ -533,8 +543,8 @@ NPM_FALLBACK_INSTALL_CMD="${NPM_FALLBACK_INSTALL_CMD:-npm install}"
 NPM_ALLOW_FALLBACK_INSTALL="${NPM_ALLOW_FALLBACK_INSTALL:-0}"
 STOP_ON_LOCK_MISMATCH="${STOP_ON_LOCK_MISMATCH:-1}"
 
-GITHUB_REPO_URL="${GITHUB_REPO_URL:-https://${jarvis_tools_GITHUB_TOKEN}@github.com/papapingouin-be/jarvis-mcp.git}"
-GITEA_REPO_URL="${GITEA_REPO_URL:-https://${jarvis_tools_GITEA_TOKEN}@webgit.jarvis.papapingouinbe.duckdns.org/jarvisadmin/jarvis-mcp-tools.git}"
+GITHUB_REPO_URL="${GITHUB_REPO_URL:-https://${jarvis_tools_GITHUB_TOKEN:-}@github.com/papapingouin-be/jarvis-mcp.git}"
+GITEA_REPO_URL="${GITEA_REPO_URL:-https://${jarvis_tools_GITEA_TOKEN:-}@webgit.jarvis.papapingouinbe.duckdns.org/jarvisadmin/jarvis-mcp-tools.git}"
 GITHUB_REMOTE_NAME="${GITHUB_REMOTE_NAME:-github-src}"
 
 WEB_CODE_LOCAL_SUBDIR="${WEB_CODE_LOCAL_SUBDIR:-jarvis-config-web}"
@@ -886,21 +896,27 @@ if [[ "$RESTART_STRATEGY" == "docker" ]]; then
   : "${JARVIS_MCPO_CONTAINER_NAME:?Variable manquante: JARVIS_MCPO_CONTAINER_NAME}"
 fi
 
-[[ -d "$JARVIS_LOCAL_REPO/.git" ]] || die "Repo local introuvable: $JARVIS_LOCAL_REPO/.git" "$EXIT_ENV"
-[[ -x "$JARVIS_MIRROR_SCRIPT" ]] || die "Script mirror introuvable ou non exécutable: $JARVIS_MIRROR_SCRIPT" "$EXIT_ENV"
+if phase_enabled "all" || phase_enabled "sync" || phase_enabled "install" || phase_enabled "build" || phase_enabled "deploy-web" || phase_enabled "deploy-scripts"; then
+  [[ -d "${JARVIS_LOCAL_REPO}/.git" ]] || die "Repo local introuvable: ${JARVIS_LOCAL_REPO}/.git" "$EXIT_ENV"
+fi
+
+if phase_enabled "all" || phase_enabled "mirror"; then
+  [[ -x "${JARVIS_MIRROR_SCRIPT}" ]] || die "Script mirror introuvable ou non exécutable: ${JARVIS_MIRROR_SCRIPT}" "$EXIT_ENV"
+fi
 
 if phase_enabled "all" || phase_enabled "deploy-web" || phase_enabled "deploy-scripts"; then
   detect_ssh_auth_mode
 fi
 
 info "ENV_FILE                    = $ENV_FILE"
+info "ENV_SOURCE                  = $ENV_SOURCE"
 info "LOG_FILE                    = $LOG_FILE"
 info "SUMMARY_JSON                = $SUMMARY_JSON"
 info "PHASE                       = $PHASE"
 info "DRY_RUN                     = $DRY_RUN"
 info "JSON_STDOUT                 = $JSON_STDOUT"
 info "USE_SUDO                    = $USE_SUDO"
-info "JARVIS_LOCAL_REPO           = $JARVIS_LOCAL_REPO"
+info "JARVIS_LOCAL_REPO           = ${JARVIS_LOCAL_REPO:-}"
 info "JARVIS_BRANCH               = $JARVIS_BRANCH"
 info "GITHUB_REMOTE_NAME          = $GITHUB_REMOTE_NAME"
 info "GITHUB_REPO_URL             = $(printf '%s\n' "$GITHUB_REPO_URL" | mask_url)"
@@ -913,8 +929,8 @@ info "SCRIPT_REMOTE_PATH          = $SCRIPT_REMOTE_PATH"
 info "SCRIPT_REMOTE_DELETE        = $SCRIPT_REMOTE_DELETE"
 info "SCRIPT_DIR_MODE             = $SCRIPT_DIR_MODE"
 info "SCRIPT_FILE_MODE            = $SCRIPT_FILE_MODE"
-info "JARVIS_srv_SSH              = $JARVIS_srv_SSH"
-info "JARVIS_srv_USER             = $JARVIS_srv_USER"
+info "JARVIS_srv_SSH              = ${JARVIS_srv_SSH:-}"
+info "JARVIS_srv_USER             = ${JARVIS_srv_USER:-}"
 info "SSH_AUTH_MODE               = $SSH_AUTH_MODE"
 info "PORTAINER_USE_STACK_WEBHOOK = $PORTAINER_USE_STACK_WEBHOOK"
 info "RESTART_STRATEGY            = $RESTART_STRATEGY"
@@ -1086,12 +1102,12 @@ fi
 finalize_summary "$EXIT_OK"
 
 log "Terminé"
-info "Repo local mis à jour       : $JARVIS_LOCAL_REPO"
+info "Repo local mis à jour       : ${JARVIS_LOCAL_REPO:-}"
 info "Déploiement web SSH         : oui"
 info "Déploiement scripts SSH     : oui"
 info "Mirror GitHub -> Gitea      : oui"
 info "Webhook Portainer déclenché : oui"
-info "Conteneur redémarré         : $JARVIS_MCPO_CONTAINER_NAME"
+info "Conteneur redémarré         : ${JARVIS_MCPO_CONTAINER_NAME:-webhook-managed}"
 info "Log                         : $LOG_FILE"
 info "Résumé JSON                 : $SUMMARY_JSON"
 

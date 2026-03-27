@@ -344,4 +344,47 @@ describe("script runner service", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("does not require optional env definitions before execution", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "script-runner-"));
+
+    try {
+      const fileName = "approved.sh";
+      await writeFile(path.join(tempDir, fileName), "#!/usr/bin/env bash\necho '{}'\n", "utf8");
+
+      const registry = new ApprovedScriptRegistry({
+        "approved.sh": {
+          name: "approved.sh",
+          file_name: fileName,
+          required_env: [
+            {
+              name: "OPTIONAL_DEPLOY_TARGET",
+              required: false,
+              secret: false,
+              description: "Only needed by deploy-like phases inside the script.",
+            },
+          ],
+        },
+      });
+
+      const service = new ScriptRunnerService({
+        scriptsRoot: tempDir,
+        registry,
+        scriptEnvResolver: async () => ({}),
+        execRunner: async () => ({
+          stdout: "{\"summary\":\"ok\"}",
+          stderr: "",
+        }),
+      });
+
+      const result = await service.run({
+        script_name: "approved.sh",
+        phase: "collect",
+      });
+
+      assert.strictEqual(result.ok, true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

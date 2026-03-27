@@ -1,5 +1,5 @@
 import type { DatabaseClient } from "../modules/jarvis_git_bridge/db/database.js";
-import type { ScriptDefinition, ScriptRegistry } from "../modules/script_runner/types/domain.js";
+import type { ScriptDefinition, ScriptEnvDefinition, ScriptRegistry } from "../modules/script_runner/types/domain.js";
 
 type AppConfigRow = {
   config_key: string;
@@ -19,17 +19,39 @@ type ScriptEnvValueRow = {
   env_value: unknown;
 };
 
-function parseStringArray(input: unknown): Array<string> {
+function parseScriptEnvDefinitions(input: unknown): Array<ScriptEnvDefinition> {
   if (Array.isArray(input)) {
     return input
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
+      .map((value) => {
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+          return trimmed.length > 0 ? trimmed : null;
+        }
+
+        if (typeof value !== "object" || value === null) {
+          return null;
+        }
+
+        const name = typeof value.name === "string" ? value.name.trim() : "";
+        if (name.length === 0) {
+          return null;
+        }
+
+        return {
+          name,
+          required: value.required === undefined ? true : value.required === true,
+          secret: value.secret === true,
+          description: typeof value.description === "string" && value.description.trim().length > 0
+            ? value.description.trim()
+            : undefined,
+        } satisfies Exclude<ScriptEnvDefinition, string>;
+      })
+      .filter((value): value is ScriptEnvDefinition => value !== null);
   }
 
   if (typeof input === "string") {
     try {
-      return parseStringArray(JSON.parse(input) as unknown);
+      return parseScriptEnvDefinitions(JSON.parse(input) as unknown);
     } catch {
       return [];
     }
@@ -51,7 +73,7 @@ function toScriptDefinition(row: ScriptRegistryRow): ScriptDefinition {
   return {
     name: row.script_name,
     file_name: row.file_name,
-    required_env: parseStringArray(row.required_env_json),
+    required_env: parseScriptEnvDefinitions(row.required_env_json),
     description: toOptionalString(row.description),
   };
 }

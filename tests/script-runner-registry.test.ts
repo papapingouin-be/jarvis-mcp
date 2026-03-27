@@ -19,6 +19,14 @@ describe("approved script registry", () => {
     assert.strictEqual(registry.get("proxmox-diagnose.sh").file_name, "proxmox-diagnose.sh");
   });
 
+  it("contains jarvis_sync_build_redeploy.sh", () => {
+    const registry = new ApprovedScriptRegistry();
+
+    assert.strictEqual(registry.isAllowed("jarvis_sync_build_redeploy.sh"), true);
+    assert(registry.listNames().includes("jarvis_sync_build_redeploy.sh"));
+    assert.strictEqual(registry.get("jarvis_sync_build_redeploy.sh").file_name, "jarvis_sync_build_redeploy.sh");
+  });
+
   it("returns script descriptions", () => {
     const registry = new ApprovedScriptRegistry();
 
@@ -29,6 +37,10 @@ describe("approved script registry", () => {
     const diagnoseDescription = registry.get("proxmox-diagnose.sh").description;
     assert.strictEqual(typeof diagnoseDescription, "string");
     assert(diagnoseDescription?.includes("Proxmox"));
+
+    const redeployDescription = registry.get("jarvis_sync_build_redeploy.sh").description;
+    assert.strictEqual(typeof redeployDescription, "string");
+    assert(redeployDescription?.includes("deploy"));
   });
 
   it("rejects unknown scripts", () => {

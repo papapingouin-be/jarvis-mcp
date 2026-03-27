@@ -1,7 +1,7 @@
 import { createDatabaseClientFromEnv } from "../modules/jarvis_git_bridge/db/database.js";
 import { runJarvisGitBridgeMigrations } from "../modules/jarvis_git_bridge/db/repositories.js";
 import { ScriptRunnerError } from "../modules/script_runner/services/errors.js";
-import type { ScriptDefinition, ScriptRegistry } from "../modules/script_runner/types/domain.js";
+import type { ScriptDefinition, ScriptEnvDefinition, ScriptRegistry } from "../modules/script_runner/types/domain.js";
 import { getScriptRunnerEnvConfig, getServerEnvConfig, type TransportMode } from "./env.js";
 import {
   AppConfigRepository,
@@ -18,9 +18,39 @@ type ServerConfigOverride = {
 
 type ScriptEnvEntry = {
   name: string;
+  required: boolean;
+  secret: boolean;
+  description: string | null;
   value: string | null;
   is_set: boolean;
 };
+
+function toScriptEnvEntry(definition: ScriptEnvDefinition): {
+  name: string;
+  required: boolean;
+  secret: boolean;
+  description: string | null;
+} {
+  if (typeof definition === "string") {
+    return {
+      name: definition,
+      required: true,
+      secret: false,
+      description: null,
+    };
+  }
+
+  return {
+    name: definition.name,
+    required: definition.required !== false,
+    secret: definition.secret === true,
+    description: typeof definition.description === "string" ? definition.description : null,
+  };
+}
+
+function getScriptEnvNames(definition: ScriptDefinition): Array<string> {
+  return definition.required_env.map((entry) => toScriptEnvEntry(entry).name);
+}
 
 function isTransportMode(value: unknown): value is TransportMode {
   return value === "stdio" || value === "http";
@@ -118,7 +148,7 @@ function normalizeScriptEnvInput(
   definition: ScriptDefinition,
   values: Record<string, string>
 ): Record<string, string> {
-  const allowedNames = new Set(definition.required_env);
+  const allowedNames = new Set(getScriptEnvNames(definition));
   const normalizedEntries = Object.entries(values).map(([key, value]) => [key.trim(), value.trim()] as const);
   const invalidKeys = normalizedEntries
     .map(([key]) => key)
@@ -206,10 +236,13 @@ export async function describeScriptEnv(scriptName: string): Promise<{
   return {
     ok: true,
     script_name: definition.name,
-    required_env: definition.required_env.map((name) => ({
-      name,
-      value: storedValues[name] ?? null,
-      is_set: typeof storedValues[name] === "string",
+    required_env: definition.required_env.map((entry) => {
+      const metadata = toScriptEnvEntry(entry);
+      return {
+        ...metadata,
+        value: storedValues[metadata.name] ?? null,
+        is_set: typeof storedValues[metadata.name] === "string",
+      };
     })),
   };
 }

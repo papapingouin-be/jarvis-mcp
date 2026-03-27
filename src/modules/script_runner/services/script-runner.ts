@@ -7,7 +7,7 @@ import { loadScriptEnvValues } from "../../../config/service.js";
 import { ConfiguredScriptRegistry, type ScriptRegistryProvider } from "./script-registry.js";
 import { ScriptRunnerError } from "./errors.js";
 import type { JarvisRunScriptInput } from "../types/schemas.js";
-import type { ScriptDefinition, ScriptRunSuccess } from "../types/domain.js";
+import type { ScriptDefinition, ScriptEnvDefinition, ScriptRunSuccess } from "../types/domain.js";
 import { getScriptRunnerEnvConfig } from "../../../config/env.js";
 
 const execFileAsync = promisify(execFile);
@@ -228,6 +228,14 @@ function toScriptSummary(script: ScriptDefinition): Record<string, unknown> {
   };
 }
 
+function isRequiredEnvDefinition(definition: ScriptEnvDefinition): boolean {
+  return typeof definition === "string" || definition.required !== false;
+}
+
+function getEnvName(definition: ScriptEnvDefinition): string {
+  return typeof definition === "string" ? definition : definition.name;
+}
+
 export class ScriptRunnerService {
   private readonly scriptsRoot: string;
   private readonly registry: ScriptRegistryProvider;
@@ -289,10 +297,13 @@ export class ScriptRunnerService {
     await access(scriptPath);
 
     const executionEnv = await this.buildExecutionEnv(script);
-    const missingEnv = script.required_env.filter((name) => {
-      const value = executionEnv[name]?.trim();
-      return typeof value !== "string" || value.length === 0;
-    });
+    const missingEnv = script.required_env
+      .filter((definition) => isRequiredEnvDefinition(definition))
+      .map((definition) => getEnvName(definition))
+      .filter((name) => {
+        const value = executionEnv[name]?.trim();
+        return typeof value !== "string" || value.length === 0;
+      });
 
     if (missingEnv.length > 0) {
       throw new ScriptRunnerError(

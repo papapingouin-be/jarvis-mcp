@@ -1,6 +1,6 @@
 import path from "node:path";
 import { config as loadDotenv } from "dotenv";
-import type { ScriptDefinition, ScriptRegistry } from "../modules/script_runner/types/domain.js";
+import type { ScriptDefinition, ScriptEnvDefinition, ScriptRegistry } from "../modules/script_runner/types/domain.js";
 
 loadDotenv();
 
@@ -9,9 +9,16 @@ export type TransportMode = "stdio" | "http";
 type ScriptRegistryInput = Record<string, {
   name?: string;
   file_name?: string;
-  required_env?: Array<string>;
+  required_env?: Array<InputScriptEnvDefinition>;
   description?: string;
 }>;
+
+type InputScriptEnvDefinition = string | {
+  name?: string;
+  required?: boolean;
+  secret?: boolean;
+  description?: string;
+};
 
 export const SERVER_NAME = "mcp-server-starter";
 export const SERVER_VERSION = "1.0.3";
@@ -37,6 +44,61 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
     required_env: [],
     description: "Diagnostic et orchestration Proxmox via SSH, avec modes collect, preflight et gestion CT.",
   },
+  "jarvis_sync_build_redeploy.sh": {
+    name: "jarvis_sync_build_redeploy.sh",
+    file_name: "jarvis_sync_build_redeploy.sh",
+    required_env: [
+      {
+        name: "jarvis_tools_GITHUB_TOKEN",
+        required: false,
+        secret: true,
+        description: "GitHub token used for sync and mirror phases.",
+      },
+      {
+        name: "jarvis_tools_GITEA_TOKEN",
+        required: false,
+        secret: true,
+        description: "Gitea token used for mirror phase.",
+      },
+      {
+        name: "JARVIS_LOCAL_REPO",
+        required: false,
+        secret: false,
+        description: "Local repository path used by install, build and deploy phases.",
+      },
+      {
+        name: "JARVIS_MIRROR_SCRIPT",
+        required: false,
+        secret: false,
+        description: "Mirror helper script path for mirror phase.",
+      },
+      {
+        name: "JARVIS_TOOLS_WEBHOOK_URL",
+        required: false,
+        secret: true,
+        description: "Portainer webhook URL used for webhook or restart phases.",
+      },
+      {
+        name: "JARVIS_MCPO_CONTAINER_NAME",
+        required: false,
+        secret: false,
+        description: "MCPO container name when restart strategy is docker.",
+      },
+      {
+        name: "JARVIS_srv_SSH",
+        required: false,
+        secret: false,
+        description: "SSH host and port for deploy target.",
+      },
+      {
+        name: "JARVIS_srv_USER",
+        required: false,
+        secret: false,
+        description: "SSH user for deploy target.",
+      },
+    ],
+    description: "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.",
+  },
 };
 
 const DEFAULT_SCRIPT_RUNNER_SENSITIVE_ENV_NAMES = [
@@ -44,6 +106,9 @@ const DEFAULT_SCRIPT_RUNNER_SENSITIVE_ENV_NAMES = [
   "PROXMOX_API_TOKEN_SECRET",
   "PROXMOX_API_TOKEN_ID",
   "NPM_SECRET",
+  "jarvis_tools_GITHUB_TOKEN",
+  "jarvis_tools_GITEA_TOKEN",
+  "JARVIS_TOOLS_WEBHOOK_URL",
 ];
 
 const DEFAULT_DIAGNOSE_ENV_VARS = [
@@ -99,11 +164,40 @@ function toScriptDefinition(name: string, input: ScriptDefinition | ScriptRegist
   return {
     name: input.name ?? name,
     file_name: input.file_name ?? name,
-    required_env: Array.isArray(input.required_env) ? [...input.required_env] : [],
+    required_env: Array.isArray(input.required_env) ? normalizeScriptEnvDefinitions(input.required_env) : [],
     description: typeof input.description === "string" && input.description.trim().length > 0
       ? input.description.trim()
       : undefined,
   };
+}
+
+function normalizeScriptEnvDefinitions(input: Array<InputScriptEnvDefinition | ScriptEnvDefinition>): Array<ScriptEnvDefinition> {
+  return input
+    .map((entry) => {
+      if (typeof entry === "string") {
+        const trimmed = entry.trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+
+      if (typeof entry !== "object" || entry === null) {
+        return null;
+      }
+
+      const name = typeof entry.name === "string" ? entry.name.trim() : "";
+      if (name.length === 0) {
+        return null;
+      }
+
+      return {
+        name,
+        required: entry.required === undefined ? true : entry.required === true,
+        secret: entry.secret === true,
+        description: typeof entry.description === "string" && entry.description.trim().length > 0
+          ? entry.description.trim()
+          : undefined,
+      } satisfies Exclude<ScriptEnvDefinition, string>;
+    })
+    .filter((entry): entry is ScriptEnvDefinition => entry !== null);
 }
 
 function cloneScriptRegistry(registry: ScriptRegistry): ScriptRegistry {
