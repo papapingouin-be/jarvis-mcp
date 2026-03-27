@@ -23,8 +23,7 @@ type ScriptEnvValueRow = {
 
 function parseScriptEnvDefinitions(input: unknown): Array<ScriptEnvDefinition> {
   if (Array.isArray(input)) {
-    return input
-      .map((value) => {
+    const mapped: Array<ScriptEnvDefinition | null> = input.map((value) => {
         if (typeof value === "string") {
           const trimmed = value.trim();
           return trimmed.length > 0 ? trimmed : null;
@@ -46,9 +45,10 @@ function parseScriptEnvDefinitions(input: unknown): Array<ScriptEnvDefinition> {
           description: typeof value.description === "string" && value.description.trim().length > 0
             ? value.description.trim()
             : undefined,
-        } satisfies Exclude<ScriptEnvDefinition, string>;
-      })
-      .filter((value): value is ScriptEnvDefinition => value !== null);
+        };
+      });
+
+    return mapped.filter((value): value is ScriptEnvDefinition => value !== null);
   }
 
   if (typeof input === "string") {

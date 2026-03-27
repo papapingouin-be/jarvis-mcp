@@ -177,8 +177,7 @@ function toScriptDefinition(name: string, input: ScriptDefinition | ScriptRegist
 }
 
 function normalizeScriptEnvDefinitions(input: Array<InputScriptEnvDefinition | ScriptEnvDefinition>): Array<ScriptEnvDefinition> {
-  return input
-    .map((entry) => {
+  const mapped: Array<ScriptEnvDefinition | null> = input.map((entry) => {
       if (typeof entry === "string") {
         const trimmed = entry.trim();
         return trimmed.length > 0 ? trimmed : null;
@@ -200,9 +199,10 @@ function normalizeScriptEnvDefinitions(input: Array<InputScriptEnvDefinition | S
         description: typeof entry.description === "string" && entry.description.trim().length > 0
           ? entry.description.trim()
           : undefined,
-      } satisfies Exclude<ScriptEnvDefinition, string>;
-    })
-    .filter((entry): entry is ScriptEnvDefinition => entry !== null);
+      };
+    });
+
+  return mapped.filter((entry): entry is ScriptEnvDefinition => entry !== null);
 }
 
 function cloneScriptRegistry(registry: ScriptRegistry): ScriptRegistry {
