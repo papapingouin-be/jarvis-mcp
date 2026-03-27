@@ -41,6 +41,8 @@ MCP_CONFIRMED="false"
 MCP_MODE=""
 declare -A MCP_PARAMS=()
 
+exec 3>&1
+
 CURRENT_STEP=""
 CURRENT_STEP_STATUS="pending"
 
@@ -502,7 +504,6 @@ on_error() {
 
 trap 'on_error $LINENO' ERR
 
-exec 3>&1
 if [[ "$JSON_STDOUT" == "1" ]]; then
   exec > >(tee -a "$LOG_FILE" >&2) 2>&1
 else

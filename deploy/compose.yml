@@ -55,6 +55,7 @@ services:
     volumes:
       - /home/jarvis/tools:/opt/host-tools:ro
       - ${jarvis_tools_SCRIPTS_HOST_PATH:-/opt/jarvis/shared/scripts}:/opt/jarvis/shared/scripts:ro
+      - ${jarvis_tools_SYNC_BUILD_REDEPLOY_ENV_FILE_HOST_PATH:-/opt/jarvis/mcp/jarvis_sync_build_redeploy.env}:/app/tools/.env:ro
     networks:
       - jarvis_net
 
