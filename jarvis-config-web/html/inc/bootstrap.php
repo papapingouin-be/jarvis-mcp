@@ -564,35 +564,344 @@ function run_script_json_by_name(PDO $pdo, string $scriptName, string $phase, bo
     return $decoded;
 }
 
+function script_registry_row(PDO $pdo, string $scriptName): ?array
+{
+    if (!table_exists($pdo, 'jarvis_script_registry')) {
+        return null;
+    }
+
+    $statement = $pdo->prepare(
+        "select script_name,file_name,coalesce(description,'') as description,coalesce(metadata_json,'{}'::jsonb) as metadata_json
+         from jarvis_script_registry
+         where script_name=:n"
+    );
+    $statement->execute(['n' => $scriptName]);
+    $row = $statement->fetch();
+
+    return is_array($row) ? $row : null;
+}
+
+function script_debug_attempt(string $label, string $command, array $result, ?array $payload = null): array
+{
+    return [
+        'label' => $label,
+        'command' => $command,
+        'exit_code' => (int) ($result['exit_code'] ?? -1),
+        'stdout' => (string) ($result['stdout'] ?? ''),
+        'stderr' => (string) ($result['stderr'] ?? ''),
+        'decoded' => $payload,
+    ];
+}
+
+function script_run_json_attempt(PDO $pdo, string $scriptName, string $phase, bool $confirmed, array $params, string $label): array
+{
+    $pc = precheck($pdo, $scriptName);
+    if (!$pc['file_found']) {
+        throw new RuntimeException('Le fichier script est introuvable.');
+    }
+
+    $command = build_cmd((string) $pc['row']['file_name'], $phase, $confirmed, $params);
+    $result = run_script_process($command, $pc['script_env']);
+    $decoded = null;
+
+    if (trim((string) $result['stdout']) !== '') {
+        $candidate = json_decode((string) $result['stdout'], true);
+        if (is_array($candidate)) {
+            $decoded = $candidate;
+        }
+    }
+
+    return [
+        'ok' => (int) ($result['exit_code'] ?? 1) === 0 && is_array($decoded),
+        'payload' => $decoded,
+        'attempt' => script_debug_attempt($label, $command, $result, $decoded),
+    ];
+}
+
+function script_services_from_metadata(array $metadata): array
+{
+    $services = is_array($metadata['services'] ?? null) ? $metadata['services'] : [];
+    $normalized = [];
+
+    foreach ($services as $service) {
+        if (!is_array($service)) {
+            continue;
+        }
+
+        $name = trim((string) ($service['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+
+        $normalized[] = [
+            'name' => $name,
+            'phase' => trim((string) ($service['phase'] ?? '')),
+            'confirmed_required' => !empty($service['confirmed_required']),
+            'description' => trim((string) ($service['description'] ?? '')),
+            'required_params' => is_array($service['required_params'] ?? null) ? array_values($service['required_params']) : [],
+            'optional_params' => is_array($service['optional_params'] ?? null) ? array_values($service['optional_params']) : [],
+            'defaults' => is_array($service['defaults'] ?? null) ? $service['defaults'] : [],
+            'example_params' => is_array($service['example_params'] ?? null) ? $service['example_params'] : [],
+        ];
+    }
+
+    return $normalized;
+}
+
+function script_service_find_in_metadata(array $metadata, string $serviceName): array
+{
+    foreach (script_services_from_metadata($metadata) as $service) {
+        if (($service['name'] ?? '') === $serviceName) {
+            return $service;
+        }
+    }
+
+    return [];
+}
+
+function script_metadata_bundle(PDO $pdo, string $scriptName): array
+{
+    $debug = [];
+    $dbRow = script_registry_row($pdo, $scriptName);
+    $dbMetadata = [];
+
+    if ($dbRow !== null) {
+        $decoded = json_decode((string) ($dbRow['metadata_json'] ?? '{}'), true);
+        $dbMetadata = is_array($decoded) ? $decoded : [];
+        $debug[] = [
+            'label' => 'db-metadata',
+            'script_name' => (string) ($dbRow['script_name'] ?? $scriptName),
+            'file_name' => (string) ($dbRow['file_name'] ?? ''),
+            'has_metadata' => !empty($dbMetadata),
+            'services_count' => count(script_services_from_metadata($dbMetadata)),
+        ];
+    } else {
+        $debug[] = [
+            'label' => 'db-metadata',
+            'script_name' => $scriptName,
+            'file_name' => '',
+            'has_metadata' => false,
+            'services_count' => 0,
+        ];
+    }
+
+    $registryAttempt = script_run_json_attempt($pdo, $scriptName, 'collect', false, [
+        'mode' => 'registry-doc',
+    ], 'registry-doc');
+    $debug[] = $registryAttempt['attempt'];
+    if ($registryAttempt['ok'] && is_array($registryAttempt['payload']['script'] ?? null)) {
+        return [
+            'source' => 'registry-doc',
+            'metadata' => $registryAttempt['payload']['script'],
+            'debug' => $debug,
+        ];
+    }
+
+    $selfDocAttempt = script_run_json_attempt($pdo, $scriptName, 'collect', false, [
+        'mode' => 'self-doc',
+    ], 'self-doc');
+    $debug[] = $selfDocAttempt['attempt'];
+    if ($selfDocAttempt['ok'] && is_array($selfDocAttempt['payload']['script'] ?? null)) {
+        return [
+            'source' => 'self-doc',
+            'metadata' => $selfDocAttempt['payload']['script'],
+            'debug' => $debug,
+        ];
+    }
+
+    if (!empty($dbMetadata)) {
+        return [
+            'source' => 'db-metadata',
+            'metadata' => $dbMetadata,
+            'debug' => $debug,
+        ];
+    }
+
+    return [
+        'source' => 'none',
+        'metadata' => [],
+        'debug' => $debug,
+    ];
+}
+
+function script_service_catalog_details(PDO $pdo, string $scriptName): array
+{
+    $debug = [];
+
+    try {
+        $attempt = script_run_json_attempt($pdo, $scriptName, 'collect', false, [
+            'mode' => 'list-services',
+        ], 'list-services');
+        $debug[] = $attempt['attempt'];
+
+        if ($attempt['ok']) {
+            $services = is_array($attempt['payload']['services'] ?? null) ? $attempt['payload']['services'] : [];
+            if (count($services) > 0) {
+                return [
+                    'services' => $services,
+                    'source' => 'list-services',
+                    'debug' => $debug,
+                ];
+            }
+        }
+    } catch (Throwable $e) {
+        $debug[] = [
+            'label' => 'list-services-exception',
+            'message' => $e->getMessage(),
+        ];
+    }
+
+    $bundle = script_metadata_bundle($pdo, $scriptName);
+    return [
+        'services' => script_services_from_metadata($bundle['metadata']),
+        'source' => (string) $bundle['source'],
+        'debug' => array_merge($debug, $bundle['debug']),
+    ];
+}
+
 function script_service_catalog(PDO $pdo, string $scriptName): array
 {
-    try {
-        $payload = run_script_json_by_name($pdo, $scriptName, 'collect', false, [
-            'mode' => 'list-services',
-        ]);
+    $details = script_service_catalog_details($pdo, $scriptName);
+    return is_array($details['services'] ?? null) ? $details['services'] : [];
+}
 
-        return is_array($payload['services'] ?? null) ? $payload['services'] : [];
-    } catch (Throwable) {
-        return [];
+function script_service_info_details(PDO $pdo, string $scriptName, string $serviceName): array
+{
+    $debug = [];
+
+    try {
+        $attempt = script_run_json_attempt($pdo, $scriptName, 'collect', false, [
+            'mode' => 'describe-service',
+            'service' => $serviceName,
+        ], 'describe-service');
+        $debug[] = $attempt['attempt'];
+
+        if ($attempt['ok']) {
+            $service = is_array($attempt['payload']['service'] ?? null) ? $attempt['payload']['service'] : [];
+            if (!empty($service)) {
+                return [
+                    'service' => $service,
+                    'source' => 'describe-service',
+                    'debug' => $debug,
+                ];
+            }
+        }
+    } catch (Throwable $e) {
+        $debug[] = [
+            'label' => 'describe-service-exception',
+            'message' => $e->getMessage(),
+        ];
     }
+
+    $bundle = script_metadata_bundle($pdo, $scriptName);
+    return [
+        'service' => script_service_find_in_metadata($bundle['metadata'], $serviceName),
+        'source' => (string) $bundle['source'],
+        'debug' => array_merge($debug, $bundle['debug']),
+    ];
 }
 
 function script_service_info(PDO $pdo, string $scriptName, string $serviceName): array
 {
-    $payload = run_script_json_by_name($pdo, $scriptName, 'collect', false, [
-        'mode' => 'describe-service',
-        'service' => $serviceName,
-    ]);
-    return is_array($payload['service'] ?? null) ? $payload['service'] : [];
+    $details = script_service_info_details($pdo, $scriptName, $serviceName);
+    return is_array($details['service'] ?? null) ? $details['service'] : [];
+}
+
+function script_service_validate_details(PDO $pdo, string $scriptName, string $serviceName, array $knownParams): array
+{
+    $debug = [];
+
+    try {
+        $params = array_merge($knownParams, [
+            'mode' => 'validate-service-input',
+            'service' => $serviceName,
+        ]);
+        $attempt = script_run_json_attempt($pdo, $scriptName, 'collect', false, $params, 'validate-service-input');
+        $debug[] = $attempt['attempt'];
+
+        if ($attempt['ok']) {
+            $payload = is_array($attempt['payload']) ? $attempt['payload'] : [];
+            if (!empty($payload)) {
+                return [
+                    'validation' => $payload,
+                    'source' => 'validate-service-input',
+                    'debug' => $debug,
+                ];
+            }
+        }
+    } catch (Throwable $e) {
+        $debug[] = [
+            'label' => 'validate-service-input-exception',
+            'message' => $e->getMessage(),
+        ];
+    }
+
+    $serviceInfo = script_service_info($pdo, $scriptName, $serviceName);
+    $requiredParams = is_array($serviceInfo['required_params'] ?? null) ? $serviceInfo['required_params'] : [];
+    $optionalParams = is_array($serviceInfo['optional_params'] ?? null) ? $serviceInfo['optional_params'] : [];
+    $defaults = is_array($serviceInfo['defaults'] ?? null) ? $serviceInfo['defaults'] : [];
+    $exampleParams = is_array($serviceInfo['example_params'] ?? null) ? $serviceInfo['example_params'] : [];
+    $ignored = ['mode', 'service', 'output'];
+    $known = [];
+
+    foreach ($knownParams as $key => $value) {
+        if (in_array((string) $key, $ignored, true)) {
+            continue;
+        }
+        if ($value === '' || $value === null) {
+            continue;
+        }
+        $known[(string) $key] = $value;
+    }
+
+    $missingRequired = [];
+    foreach ($requiredParams as $param) {
+        $paramName = trim((string) $param);
+        if ($paramName === '') {
+            continue;
+        }
+        if (!array_key_exists($paramName, $known)) {
+            $missingRequired[] = $paramName;
+        }
+    }
+
+    $optionalMissing = [];
+    foreach ($optionalParams as $param) {
+        $paramName = trim((string) $param);
+        if ($paramName === '') {
+            continue;
+        }
+        if (!array_key_exists($paramName, $known)) {
+            $optionalMissing[] = $paramName;
+        }
+    }
+
+    return [
+        'validation' => [
+            'ok' => true,
+            'mode' => 'validate-service-input',
+            'service' => $serviceName,
+            'phase' => (string) ($serviceInfo['phase'] ?? ''),
+            'confirmed_required' => !empty($serviceInfo['confirmed_required']),
+            'known' => $known,
+            'missing_required' => $missingRequired,
+            'optional_missing' => $optionalMissing,
+            'defaults' => $defaults,
+            'example_params' => $exampleParams,
+            'ready' => count($missingRequired) === 0,
+            'summary' => count($missingRequired) === 0
+                ? 'Validation calculee localement: champs requis complets.'
+                : 'Validation calculee localement: champs requis manquants.',
+        ],
+        'source' => 'local-fallback',
+        'debug' => $debug,
+    ];
 }
 
 function script_service_validate(PDO $pdo, string $scriptName, string $serviceName, array $knownParams): array
 {
-    $params = array_merge($knownParams, [
-        'mode' => 'validate-service-input',
-        'service' => $serviceName,
-    ]);
-    return run_script_json_by_name($pdo, $scriptName, 'collect', false, $params);
+    $details = script_service_validate_details($pdo, $scriptName, $serviceName, $knownParams);
+    return is_array($details['validation'] ?? null) ? $details['validation'] : [];
 }
 
 function registry_all(PDO $pdo): array

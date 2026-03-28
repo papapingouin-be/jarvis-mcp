@@ -236,6 +236,48 @@ function renderValidation(validation) {
   `;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function setServiceSource(source) {
+  const sourceInput = document.getElementById("scripts-test-service-source");
+  if (sourceInput) {
+    sourceInput.value = source || "";
+  }
+}
+
+function renderDebugPayload(debug, source = "") {
+  const rows = Array.isArray(debug) ? debug : [];
+  const list = rows.length
+    ? rows.map((entry, index) => {
+      const label = escapeHtml(entry?.label || `debug-${index + 1}`);
+      const body = escapeHtml(JSON.stringify(entry, null, 2));
+      return `<details ${index === 0 ? "open" : ""}><summary>${label}</summary><pre>${body}</pre></details>`;
+    }).join("")
+    : '<p class="small">Aucune information de debug disponible.</p>';
+
+  return `
+    <h3>Debug metadata/services</h3>
+    <p class="small">Source retenue: <code>${escapeHtml(source || "inconnue")}</code></p>
+    ${list}
+  `;
+}
+
+function updateScriptsTestDebug(debug, source = "") {
+  const debugContainer = document.getElementById("scripts-test-debug");
+  if (!debugContainer) {
+    return;
+  }
+
+  debugContainer.innerHTML = renderDebugPayload(debug, source);
+}
+
 function setPhaseFields(phaseInput, phaseDisplayInput, phaseValue) {
   const safePhase = phaseValue || "";
   if (phaseInput) {
@@ -356,6 +398,8 @@ async function loadScriptServices() {
 
   if (scriptName.trim() === "") {
     setPhaseFields(phaseInput, phaseDisplayInput, "");
+    setServiceSource("");
+    updateScriptsTestDebug([], "");
     return;
   }
 
@@ -373,6 +417,8 @@ async function loadScriptServices() {
     `api/scripts_test.php?action=service_catalog&script_name=${encodeURIComponent(scriptName)}`
   );
   const payload = await response.json();
+  setServiceSource(payload.source || "");
+  updateScriptsTestDebug(payload.debug || [], payload.source || "");
 
   if (!payload.ok || !Array.isArray(payload.services)) {
     result.innerHTML = `<div class="notice error"><pre>${payload.message || "Impossible de charger les services."}</pre></div>`;
@@ -388,7 +434,7 @@ async function loadScriptServices() {
   }
 
   if (payload.services.length === 0) {
-    result.innerHTML = '<div class="notice warning">Ce script ne publie aucun service exploitable dans cette vue.</div>';
+    result.innerHTML = `<div class="notice warning">Ce script ne publie aucun service exploitable dans cette vue.<br>Source tentee: <code>${escapeHtml(payload.source || "aucune")}</code>. Consulte le bloc debug ci-dessous.</div>`;
     setServiceUiState({
       serviceSelect,
       serviceStatus,
@@ -421,7 +467,7 @@ async function loadScriptServices() {
     enabled: true,
     statusText: `${payload.services.length} service(s) disponibles. Choisis-en un pour afficher son detail.`,
   });
-  result.innerHTML = `<div class="notice success">${payload.services.length} service(s) charges. Choisis un service puis clique sur <strong>Infos du service</strong>.</div>`;
+  result.innerHTML = `<div class="notice success">${payload.services.length} service(s) charges depuis <code>${escapeHtml(payload.source || "source inconnue")}</code>. Choisis un service puis clique sur <strong>Infos du service</strong>.</div>`;
 }
 
 async function fetchAndRenderServiceInfo({
@@ -446,6 +492,8 @@ async function fetchAndRenderServiceInfo({
       `api/scripts_test.php?action=service_info&script_name=${encodeURIComponent(scriptName)}&service=${encodeURIComponent(serviceName)}`
     );
     const payload = await response.json();
+    setServiceSource(payload.source || "");
+    updateScriptsTestDebug(payload.debug || [], payload.source || "");
 
     if (!payload.ok) {
       result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur service_info"}</pre></div>`;
@@ -463,7 +511,7 @@ async function fetchAndRenderServiceInfo({
       confirmedInput.value = payload.service?.confirmed_required ? "true" : "false";
     }
 
-    result.innerHTML = `<div class="card"><h3>Action possible</h3>${renderServiceInfo(payload.service || {})}</div>`;
+    result.innerHTML = `<div class="card"><h3>Action possible</h3><p class="small">Source: <code>${escapeHtml(payload.source || "inconnue")}</code></p>${renderServiceInfo(payload.service || {})}</div>`;
   } catch (error) {
     result.innerHTML = `<div class="notice error"><pre>${error?.message || "Erreur reseau service_info"}</pre></div>`;
   } finally {
@@ -498,6 +546,9 @@ function bindScriptsTestForm() {
   const confirmedInput = document.getElementById("scripts-test-confirmed");
   const paramsJsonInput = document.getElementById("scripts-test-params-json");
   const result = document.getElementById("scripts-test-result");
+
+  setServiceSource("");
+  updateScriptsTestDebug([], "");
 
   if (scriptNameInput) {
     scriptNameInput.onchange = async () => {
@@ -630,6 +681,8 @@ function bindScriptsTestForm() {
           body,
         });
         const payload = await response.json();
+        setServiceSource(payload.source || "");
+        updateScriptsTestDebug(payload.debug || [], payload.source || "");
 
         if (!payload.ok) {
           result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur validate_service"}</pre></div>`;
@@ -647,7 +700,7 @@ function bindScriptsTestForm() {
           confirmedInput.value = payload.validation?.confirmed_required ? "true" : "false";
         }
 
-        result.innerHTML = `<div class="card"><h3>Verification des infos connues</h3>${renderValidation(payload.validation || {})}</div>`;
+        result.innerHTML = `<div class="card"><h3>Verification des infos connues</h3><p class="small">Source: <code>${escapeHtml(payload.source || "inconnue")}</code></p>${renderValidation(payload.validation || {})}</div>`;
       } catch (error) {
         result.innerHTML = `<div class="notice error"><pre>${error?.message || "Erreur reseau validate_service"}</pre></div>`;
       } finally {
