@@ -2,7 +2,12 @@
 set -Eeuo pipefail
 
 ########################################
-# Jarvis V5.2
+# jarvis_sync_build_redeploy.sh
+# Repo script version: 2.0
+# Role: canonical implementation used by registry/config-web/runtime
+# Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
+#
+# Workflow version: Jarvis V5.2
 # Sync GitHub -> Build local -> Deploy web code -> Deploy scripts
 # -> Mirror Gitea -> Portainer webhook -> Restart MCPO
 #
