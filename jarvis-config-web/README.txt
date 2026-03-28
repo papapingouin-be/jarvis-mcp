@@ -1,4 +1,4 @@
-JARVIS UI V7.3
+JARVIS UI V7.4
 
 Cette version remet les fonctions utiles supprimées par la V7 minimale
 et ajoute des outils supplémentaires.

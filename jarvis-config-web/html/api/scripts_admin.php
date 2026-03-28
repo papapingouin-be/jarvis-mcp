@@ -81,6 +81,27 @@ $incompatibleScripts = array_values(array_filter(
 $installCatalogScripts = scan_install_catalog_scripts();
 $runtimeScripts = scan_scripts();
 $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
+$versionOk = 0;
+$versionDiff = 0;
+
+foreach ($rows as $row) {
+    $diskVersion = '';
+    $scriptName = (string) ($row['script_name'] ?? '');
+    foreach ($discoveredScripts as $script) {
+        $metadata = is_array($script['metadata'] ?? null) ? $script['metadata'] : [];
+        if (($metadata['script_name'] ?? '') === $scriptName) {
+            $diskVersion = (string) ($metadata['version'] ?? '');
+            break;
+        }
+    }
+
+    $comparison = jarvis_version_compare($row['version'] ?? '', $diskVersion);
+    if ($comparison['label'] === 'OK') {
+        $versionOk++;
+    } elseif ($comparison['label'] === 'DIFF') {
+        $versionDiff++;
+    }
+}
 ?>
 <div class="stack">
   <div class="notice">
@@ -167,6 +188,8 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
         <div class="kpi"><div class="label">DB</div><div class="value"><?= h(count($rows)) ?></div></div>
         <div class="kpi"><div class="label">Compatibles</div><div class="value"><?= h(count($compatibleScripts)) ?></div></div>
         <div class="kpi"><div class="label">Incompatibles</div><div class="value"><?= h(count($incompatibleScripts)) ?></div></div>
+        <div class="kpi"><div class="label">Versions OK</div><div class="value"><?= h((string) $versionOk) ?></div></div>
+        <div class="kpi"><div class="label">Versions DIFF</div><div class="value"><?= h((string) $versionDiff) ?></div></div>
       </div>
       <?php if ($scanPayload !== null): ?>
         <p class="small"><?= h((string) ($scanPayload['summary'] ?? '')) ?></p>
@@ -190,7 +213,9 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
         <tr>
           <th>script_name</th>
           <th>file_name</th>
-          <th>version</th>
+          <th>version DB</th>
+          <th>version disque</th>
+          <th>etat version</th>
           <th>description</th>
           <th>history</th>
           <th>required_env_json</th>
@@ -201,11 +226,24 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
       </thead>
       <tbody>
         <?php foreach ($rows as $row): ?>
-          <?php $found = is_file(script_abs((string) $row['file_name'])); ?>
+          <?php
+          $found = is_file(script_abs((string) $row['file_name']));
+          $diskVersion = '';
+          foreach ($discoveredScripts as $script) {
+              $metadata = is_array($script['metadata'] ?? null) ? $script['metadata'] : [];
+              if (($metadata['script_name'] ?? '') === (string) $row['script_name']) {
+                  $diskVersion = (string) ($metadata['version'] ?? '');
+                  break;
+              }
+          }
+          $comparison = jarvis_version_compare($row['version'] ?? '', $diskVersion);
+          ?>
           <tr>
             <td><strong><?= h((string) $row['script_name']) ?></strong></td>
             <td><code><?= h((string) $row['file_name']) ?></code></td>
-            <td><code><?= h((string) ($row['version'] ?? '')) ?></code></td>
+            <td><code><?= h(jarvis_version_value($row['version'] ?? '')) ?></code></td>
+            <td><code><?= h(jarvis_version_value($diskVersion)) ?></code></td>
+            <td><span class="status <?= h($comparison['class']) ?>"><?= h($comparison['label']) ?></span></td>
             <td><?= h((string) $row['description']) ?></td>
             <td>
               <?= h((string) ($row['history_count'] ?? '0')) ?>
@@ -250,6 +288,9 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
           <tr>
             <th>file_name</th>
             <th>script_name</th>
+            <th>version disque</th>
+            <th>version DB</th>
+            <th>etat version</th>
             <th>etat registry</th>
             <th>description</th>
             <th>required_env</th>
@@ -265,10 +306,15 @@ $runtimeScriptMap = array_fill_keys($runtimeScripts, true);
             $dbState = $scriptName !== '' && isset($dbByScriptName[$scriptName]) ? 'EN DB' : 'HORS DB';
             $requiredEnv = is_array($metadata['required_env'] ?? null) ? $metadata['required_env'] : [];
             $services = is_array($metadata['services'] ?? null) ? $metadata['services'] : [];
+            $dbVersion = $scriptName !== '' && isset($dbByScriptName[$scriptName]) ? (string) ($dbByScriptName[$scriptName]['version'] ?? '') : '';
+            $comparison = jarvis_version_compare($dbVersion, $metadata['version'] ?? '');
             ?>
             <tr>
               <td><code><?= h((string) ($script['file_name'] ?? '')) ?></code></td>
               <td><?= h($scriptName !== '' ? $scriptName : '-') ?></td>
+              <td><code><?= h(jarvis_version_value($metadata['version'] ?? '')) ?></code></td>
+              <td><code><?= h(jarvis_version_value($dbVersion)) ?></code></td>
+              <td><span class="status <?= h($comparison['class']) ?>"><?= h($comparison['label']) ?></span></td>
               <td>
                 <span class="status <?= !empty($script['registry_compatible']) ? 'up' : 'down' ?>">
                   <?= !empty($script['registry_compatible']) ? h($dbState) : 'INCOMPATIBLE' ?>

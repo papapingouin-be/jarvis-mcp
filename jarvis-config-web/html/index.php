@@ -1,15 +1,16 @@
 <!doctype html>
 <html lang="fr">
 <head>
+<?php require_once __DIR__ . '/inc/bootstrap.php'; ?>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Jarvis UI V7.3</title>
+<title>Jarvis UI <?= h(jarvis_ui_version()) ?></title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <div id="app">
   <aside id="sidebar">
-    <h1>Jarvis V7.3</h1>
+    <h1>Jarvis <?= h(jarvis_ui_version()) ?></h1>
     <div class="group">Scripts MCP</div>
     <button class="nav-btn active" data-page="overview">Vue d'ensemble</button>
     <button class="nav-btn" data-page="scripts_admin">Gestion scripts</button>

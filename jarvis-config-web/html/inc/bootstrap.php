@@ -11,6 +11,11 @@ function h(mixed $v): string
     return htmlspecialchars((string) $v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+function jarvis_ui_version(): string
+{
+    return 'V7.4';
+}
+
 function jarvis_data_path(string $s = ''): string
 {
     $base = '/var/www/data';
@@ -579,6 +584,44 @@ function script_registry_row(PDO $pdo, string $scriptName): ?array
     $row = $statement->fetch();
 
     return is_array($row) ? $row : null;
+}
+
+function jarvis_version_value(mixed $value): string
+{
+    $normalized = trim((string) $value);
+    return $normalized !== '' ? $normalized : '-';
+}
+
+function jarvis_version_compare(mixed $dbVersion, mixed $diskVersion): array
+{
+    $db = trim((string) $dbVersion);
+    $disk = trim((string) $diskVersion);
+
+    if ($db === '' && $disk === '') {
+        return [
+            'label' => 'INCONNUE',
+            'class' => 'warn',
+        ];
+    }
+
+    if ($db !== '' && $disk !== '') {
+        return [
+            'label' => $db === $disk ? 'OK' : 'DIFF',
+            'class' => $db === $disk ? 'up' : 'down',
+        ];
+    }
+
+    if ($db !== '') {
+        return [
+            'label' => 'DB SEULE',
+            'class' => 'warn',
+        ];
+    }
+
+    return [
+        'label' => 'DISQUE SEUL',
+        'class' => 'warn',
+    ];
 }
 
 function script_debug_attempt(string $label, string $command, array $result, ?array $payload = null): array
