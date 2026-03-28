@@ -200,6 +200,12 @@ function renderServiceInfo(service) {
   const optional = Array.isArray(service.optional_params)
     ? service.optional_params.map((value) => `<li><code>${value}</code></li>`).join("")
     : "";
+  const requiredEnv = Array.isArray(service.required_env)
+    ? service.required_env.map((value) => `<li><code>${value}</code></li>`).join("")
+    : "";
+  const optionalEnv = Array.isArray(service.optional_env)
+    ? service.optional_env.map((value) => `<li><code>${value}</code></li>`).join("")
+    : "";
 
   return `
     <div class="notice info">
@@ -210,6 +216,10 @@ function renderServiceInfo(service) {
     <ul>${required || "<li>Aucun</li>"}</ul>
     <p class="small"><strong>Champs optionnels</strong></p>
     <ul>${optional || "<li>Aucun</li>"}</ul>
+    <p class="small"><strong>Variables d'environnement requises</strong></p>
+    <ul>${requiredEnv || "<li>Aucune</li>"}</ul>
+    <p class="small"><strong>Variables d'environnement optionnelles</strong></p>
+    <ul>${optionalEnv || "<li>Aucune</li>"}</ul>
     <p class="small"><strong>Defaults</strong></p>
     <pre>${JSON.stringify(service.defaults || {}, null, 2)}</pre>
     <p class="small"><strong>Exemple params JSON</strong></p>
@@ -221,6 +231,9 @@ function renderValidation(validation) {
   const known = validation.known || {};
   const missingRequired = Array.isArray(validation.missing_required) ? validation.missing_required : [];
   const optionalMissing = Array.isArray(validation.optional_missing) ? validation.optional_missing : [];
+  const envStatus = validation.env_status || {};
+  const missingEnv = Array.isArray(validation.missing_env) ? validation.missing_env : [];
+  const optionalEnvMissing = Array.isArray(validation.optional_env_missing) ? validation.optional_env_missing : [];
 
   return `
     <div class="notice ${validation.ready ? "success" : "warning"}">
@@ -233,6 +246,12 @@ function renderValidation(validation) {
     <ul>${missingRequired.length ? missingRequired.map((value) => `<li><code>${value}</code></li>`).join("") : "<li>Aucun</li>"}</ul>
     <p class="small"><strong>Champs optionnels manquants</strong></p>
     <ul>${optionalMissing.length ? optionalMissing.map((value) => `<li><code>${value}</code></li>`).join("") : "<li>Aucun</li>"}</ul>
+    <p class="small"><strong>Etat environnement</strong></p>
+    <pre>${JSON.stringify(envStatus, null, 2)}</pre>
+    <p class="small"><strong>Variables d'environnement requises manquantes</strong></p>
+    <ul>${missingEnv.length ? missingEnv.map((value) => `<li><code>${value}</code></li>`).join("") : "<li>Aucune</li>"}</ul>
+    <p class="small"><strong>Variables d'environnement optionnelles manquantes</strong></p>
+    <ul>${optionalEnvMissing.length ? optionalEnvMissing.map((value) => `<li><code>${value}</code></li>`).join("") : "<li>Aucune</li>"}</ul>
   `;
 }
 

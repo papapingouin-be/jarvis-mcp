@@ -137,7 +137,7 @@ normalize_bool() {
 
 legacy_phase_to_mcp_phase() {
   case "$1" in
-    self-doc|registry-doc)
+    self-doc|registry-doc|list-services|describe-service|validate-service-input)
       printf 'collect'
       ;;
     *)
@@ -150,6 +150,9 @@ mode_description() {
   case "$1" in
     self-doc) printf 'Return machine-readable documentation for the redeploy workflow script.' ;;
     registry-doc) printf 'Return registry metadata for the redeploy workflow script.' ;;
+    list-services) printf 'List the services/actions published by the redeploy workflow script.' ;;
+    describe-service) printf 'Describe one service/action exposed by the redeploy workflow script.' ;;
+    validate-service-input) printf 'Validate params JSON and environment for one redeploy service.' ;;
     all) printf 'Run the full workflow: sync, install, build, deploy, mirror, webhook, restart.' ;;
     sync) printf 'Synchronize the local repository from GitHub.' ;;
     install) printf 'Install npm dependencies in the local repository.' ;;
@@ -171,7 +174,7 @@ service_phase() {
 
 service_confirmed_required() {
   case "$1" in
-    self-doc|registry-doc)
+    self-doc|registry-doc|list-services|describe-service|validate-service-input)
       printf 'false'
       ;;
     *)
@@ -180,9 +183,190 @@ service_confirmed_required() {
   esac
 }
 
+is_metadata_mode() {
+  case "$1" in
+    self-doc|registry-doc|list-services|describe-service|validate-service-input)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_required_params() {
+  case "$1" in
+    self-doc|registry-doc|list-services)
+      ;;
+    describe-service|validate-service-input)
+      printf '%s\n' service
+      ;;
+    all|sync|install|build|deploy-web|deploy-scripts|mirror|webhook|restart)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_optional_params() {
+  case "$1" in
+    validate-service-input|all|sync|install|build|deploy-web|deploy-scripts|mirror|webhook|restart)
+      printf '%s\n' dry_run env_file
+      ;;
+    self-doc|registry-doc|list-services|describe-service)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_required_env() {
+  case "$1" in
+    all)
+      printf '%s\n' JARVIS_LOCAL_REPO JARVIS_MIRROR_SCRIPT JARVIS_TOOLS_WEBHOOK_URL JARVIS_srv_SSH JARVIS_srv_USER
+      ;;
+    sync|install|build)
+      printf '%s\n' JARVIS_LOCAL_REPO
+      ;;
+    deploy-web|deploy-scripts)
+      printf '%s\n' JARVIS_LOCAL_REPO JARVIS_srv_SSH JARVIS_srv_USER
+      ;;
+    mirror)
+      printf '%s\n' JARVIS_MIRROR_SCRIPT
+      ;;
+    webhook|restart)
+      printf '%s\n' JARVIS_TOOLS_WEBHOOK_URL
+      ;;
+    self-doc|registry-doc|list-services|describe-service|validate-service-input)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_optional_env() {
+  case "$1" in
+    all|sync|mirror)
+      printf '%s\n' jarvis_tools_GITHUB_TOKEN jarvis_tools_GITEA_TOKEN
+      ;;
+    restart)
+      printf '%s\n' JARVIS_MCPO_CONTAINER_NAME
+      ;;
+    deploy-web|deploy-scripts)
+      printf '%s\n' JARVIS_SSH_KEY_PATH JARVIS_srv_PSWD
+      ;;
+    validate-service-input|self-doc|registry-doc|list-services|describe-service|install|build|webhook)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_defaults_json() {
+  case "$1" in
+    validate-service-input|all|sync|install|build|deploy-web|deploy-scripts|mirror|webhook|restart)
+      printf '{"dry_run":false}'
+      ;;
+    self-doc|registry-doc|list-services|describe-service)
+      printf '{}'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+service_example_params_json() {
+  case "$1" in
+    self-doc)
+      printf '{"mode":"self-doc"}'
+      ;;
+    registry-doc)
+      printf '{"mode":"registry-doc"}'
+      ;;
+    list-services)
+      printf '{"mode":"list-services"}'
+      ;;
+    describe-service)
+      printf '{"mode":"describe-service","service":"all"}'
+      ;;
+    validate-service-input)
+      printf '{"mode":"validate-service-input","service":"deploy-web","dry_run":true}'
+      ;;
+    all|sync|install|build|deploy-web|deploy-scripts|mirror|webhook|restart)
+      printf '{"mode":"%s","dry_run":true}' "$1"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+json_array_from_lines() {
+  local lines="$1"
+  local output="["
+  local first=1
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if [[ $first -eq 0 ]]; then
+      output+=","
+    fi
+    output+="\"$(json_escape_shell "$line")\""
+    first=0
+  done <<< "$lines"
+
+  output+="]"
+  printf '%s' "$output"
+}
+
+service_schema_json() {
+  local service="$1"
+  local mode="${2:-full}"
+  local phase description confirmed required_json optional_json required_env_json optional_env_json defaults_json example_json
+
+  phase="$(service_phase "$service")" || emit_mcp_error "Unknown service" "service=${service}" "describe-service"
+  description="$(mode_description "$service")"
+  confirmed="$(service_confirmed_required "$service")"
+  required_json="$(json_array_from_lines "$(service_required_params "$service")")"
+  optional_json="$(json_array_from_lines "$(service_optional_params "$service")")"
+  required_env_json="$(json_array_from_lines "$(service_required_env "$service")")"
+  optional_env_json="$(json_array_from_lines "$(service_optional_env "$service")")"
+  defaults_json="$(service_defaults_json "$service")"
+  example_json="$(service_example_params_json "$service")"
+
+  if [[ "$mode" == "short" ]]; then
+    printf '{"name":"%s","phase":"%s","confirmed_required":%s,"description":"%s"}' \
+      "$(json_escape_shell "$service")" \
+      "$(json_escape_shell "$phase")" \
+      "$confirmed" \
+      "$(json_escape_shell "$description")"
+    return
+  fi
+
+  printf '{"name":"%s","phase":"%s","confirmed_required":%s,"description":"%s","required_params":%s,"optional_params":%s,"required_env":%s,"optional_env":%s,"defaults":%s,"example_params":%s}' \
+    "$(json_escape_shell "$service")" \
+    "$(json_escape_shell "$phase")" \
+    "$confirmed" \
+    "$(json_escape_shell "$description")" \
+    "$required_json" \
+    "$optional_json" \
+    "$required_env_json" \
+    "$optional_env_json" \
+    "$defaults_json" \
+    "$example_json"
+}
+
 metadata_services_json() {
   local services="self-doc
 registry-doc
+list-services
+describe-service
+validate-service-input
 all
 sync
 install
@@ -201,16 +385,126 @@ restart"
     if [[ $first -eq 0 ]]; then
       output+=","
     fi
-    output+="$(printf '{"name":"%s","phase":"%s","confirmed_required":%s,"description":"%s"}' \
-      "$(json_escape_shell "$service")" \
-      "$(service_phase "$service")" \
-      "$(service_confirmed_required "$service")" \
-      "$(json_escape_shell "$(mode_description "$service")")")"
+    output+="$(service_schema_json "$service" short)"
     first=0
   done <<< "$services"
 
   output+="]"
   printf '%s' "$output"
+}
+
+validate_service_input_json() {
+  local service="$1"
+  local required_params optional_params required_env optional_env defaults_json example_json
+  local known_output="{" known_first=1
+  local env_output="{" env_first=1
+  local missing_required_lines="" optional_missing_lines="" missing_env_lines="" optional_env_missing_lines=""
+  local key value
+
+  required_params="$(service_required_params "$service")"
+  optional_params="$(service_optional_params "$service")"
+  required_env="$(service_required_env "$service")"
+  optional_env="$(service_optional_env "$service")"
+  defaults_json="$(service_defaults_json "$service")"
+  example_json="$(service_example_params_json "$service")"
+
+  for key in "${!MCP_PARAMS[@]}"; do
+    [[ "$key" != "mode" && "$key" != "service" ]] || continue
+    value="${MCP_PARAMS[$key]}"
+    [[ -n "$value" ]] || continue
+    if [[ $known_first -eq 0 ]]; then
+      known_output+=","
+    fi
+    known_output+="\"$(json_escape_shell "$key")\":\"$(json_escape_shell "$value")\""
+    known_first=0
+  done
+  known_output+="}"
+
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    [[ -n "${MCP_PARAMS[$key]:-}" ]] || missing_required_lines+="${key}"$'\n'
+  done <<< "$required_params"
+
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    [[ -n "${MCP_PARAMS[$key]:-}" ]] || optional_missing_lines+="${key}"$'\n'
+  done <<< "$optional_params"
+
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    value="${!key:-}"
+    if [[ $env_first -eq 0 ]]; then
+      env_output+=","
+    fi
+    env_output+="\"$(json_escape_shell "$key")\":"
+    if [[ -n "$value" ]]; then
+      env_output+="\"present\""
+    else
+      env_output+="\"missing\""
+      missing_env_lines+="${key}"$'\n'
+    fi
+    env_first=0
+  done <<< "$required_env"
+
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    value="${!key:-}"
+    if [[ $env_first -eq 0 ]]; then
+      env_output+=","
+    fi
+    env_output+="\"$(json_escape_shell "$key")\":"
+    if [[ -n "$value" ]]; then
+      env_output+="\"present\""
+    else
+      env_output+="\"missing\""
+      optional_env_missing_lines+="${key}"$'\n'
+    fi
+    env_first=0
+  done <<< "$optional_env"
+  env_output+="}"
+
+  printf '{"ok":true,"mode":"validate-service-input","service":"%s","phase":"%s","confirmed_required":%s,"known":%s,"missing_required":%s,"optional_missing":%s,"env_status":%s,"missing_env":%s,"optional_env_missing":%s,"defaults":%s,"example_params":%s,"ready":%s,"summary":"%s"}' \
+    "$(json_escape_shell "$service")" \
+    "$(json_escape_shell "$(service_phase "$service")")" \
+    "$(service_confirmed_required "$service")" \
+    "$known_output" \
+    "$(json_array_from_lines "$missing_required_lines")" \
+    "$(json_array_from_lines "$optional_missing_lines")" \
+    "$env_output" \
+    "$(json_array_from_lines "$missing_env_lines")" \
+    "$(json_array_from_lines "$optional_env_missing_lines")" \
+    "$defaults_json" \
+    "$example_json" \
+    "$([[ -z "$missing_required_lines" && -z "$missing_env_lines" ]] && printf 'true' || printf 'false')" \
+    "$(json_escape_shell "$([[ -z "$missing_required_lines" && -z "$missing_env_lines" ]] && printf 'Service input and environment look ready.' || printf 'Service input or environment is incomplete.')")"
+}
+
+handle_metadata_mode() {
+  local mode="$1"
+  local service="${MCP_PARAMS[service]:-}"
+
+  case "$mode" in
+    self-doc)
+      self_doc_json
+      ;;
+    registry-doc)
+      registry_doc_json
+      ;;
+    list-services)
+      emit_mcp_json "$(printf '{"ok":true,"mode":"list-services","services":%s,"summary":"Service catalog returned successfully."}' "$(metadata_services_json)")"
+      ;;
+    describe-service)
+      [[ -n "$service" ]] || emit_mcp_error "Missing parameter" "Expected --param service=..." "describe-service"
+      emit_mcp_json "$(printf '{"ok":true,"mode":"describe-service","service":%s,"summary":"Service description returned successfully."}' "$(service_schema_json "$service")")"
+      ;;
+    validate-service-input)
+      [[ -n "$service" ]] || emit_mcp_error "Missing parameter" "Expected --param service=..." "validate-service-input"
+      emit_mcp_json "$(validate_service_input_json "$service")"
+      ;;
+    *)
+      emit_mcp_error "Unsupported mode" "Unknown metadata mode: ${mode}" "$mode"
+      ;;
+  esac
 }
 
 self_doc_json() {
@@ -241,7 +535,7 @@ self_doc_json() {
   },
   "runtime":{
     "accepted_phase_values":["collect","execute"],
-    "accepted_params":["mode","dry_run","env_file"],
+    "accepted_params":["mode","service","dry_run","env_file"],
     "legacy_options":["--phase","--dry-run","--env","--json-stdout"]
   },
   "summary":"Jarvis sync/build/redeploy workflow self-documentation"
@@ -325,14 +619,9 @@ apply_mcp_adapter() {
   [[ -n "$MCP_MODE" ]] || emit_mcp_error "Missing parameter" "Expected --param mode=..." "dispatch"
 
   case "$MCP_MODE" in
-    self-doc)
-      [[ "$MCP_PHASE" == "collect" ]] || emit_mcp_error "Invalid phase for mode" "Mode self-doc requires phase=collect" "self-doc"
-      self_doc_json
-      exit 0
-      ;;
-    registry-doc)
-      [[ "$MCP_PHASE" == "collect" ]] || emit_mcp_error "Invalid phase for mode" "Mode registry-doc requires phase=collect" "registry-doc"
-      registry_doc_json
+    self-doc|registry-doc|list-services|describe-service|validate-service-input)
+      [[ "$MCP_PHASE" == "collect" ]] || emit_mcp_error "Invalid phase for mode" "Mode ${MCP_MODE} requires phase=collect" "$MCP_MODE"
+      handle_metadata_mode "$MCP_MODE"
       exit 0
       ;;
     all|sync|install|build|deploy-web|deploy-scripts|mirror|webhook|restart)
