@@ -36,11 +36,11 @@ ENV_FILE="${ENV_FILE:-$ENV_FILE_DEFAULT}"
 LOG_DIR="${LOG_DIR:-$LOG_DIR_DEFAULT}"
 SUMMARY_DIR="${SUMMARY_DIR:-$SUMMARY_DIR_DEFAULT}"
 
-mkdir -p "$LOG_DIR" "$SUMMARY_DIR"
-
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 LOG_FILE="${LOG_DIR}/jarvis_sync_${RUN_ID}.log"
 SUMMARY_JSON="${SUMMARY_DIR}/jarvis_sync_${RUN_ID}.json"
+LAST_SUMMARY_JSON=""
+LOG_TO_FILE=1
 
 DRY_RUN=0
 PHASE="all"
@@ -394,7 +394,11 @@ die() {
 
 emit_summary_stdout() {
   if [[ "$JSON_STDOUT" == "1" ]]; then
-    cat "$SUMMARY_JSON" >&${ORIGINAL_STDOUT_FD}
+    if [[ -n "$LAST_SUMMARY_JSON" ]]; then
+      printf '%s\n' "$LAST_SUMMARY_JSON" >&${ORIGINAL_STDOUT_FD}
+    elif [[ -n "$SUMMARY_JSON" && -f "$SUMMARY_JSON" ]]; then
+      cat "$SUMMARY_JSON" >&${ORIGINAL_STDOUT_FD}
+    fi
   fi
 }
 
@@ -441,10 +445,57 @@ mask_url() {
 }
 
 json_escape() {
-  python3 - <<'PY' "$1"
-import json, sys
-print(json.dumps(sys.argv[1]))
-PY
+  printf '"%s"' "$(json_escape_shell "${1:-}")"
+}
+
+dir_is_writable() {
+  local dir="$1"
+  [[ -n "$dir" ]] || return 1
+  mkdir -p "$dir" >/dev/null 2>&1 || return 1
+  local probe_file="$dir/.jarvis_write_test_$$"
+  : > "$probe_file" 2>/dev/null || return 1
+  rm -f "$probe_file" >/dev/null 2>&1 || true
+  return 0
+}
+
+select_writable_dir() {
+  local preferred="$1"
+  local candidate=""
+
+  if dir_is_writable "$preferred"; then
+    printf '%s' "$preferred"
+    return 0
+  fi
+
+  for candidate in "${TMPDIR:-}" /tmp /var/tmp "$PWD"; do
+    [[ -n "$candidate" ]] || continue
+    if dir_is_writable "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+configure_runtime_output_paths() {
+  local writable_log_dir=""
+  local writable_summary_dir=""
+
+  if writable_log_dir="$(select_writable_dir "$LOG_DIR")"; then
+    LOG_DIR="$writable_log_dir"
+    LOG_FILE="${LOG_DIR}/jarvis_sync_${RUN_ID}.log"
+  else
+    LOG_TO_FILE=0
+    LOG_FILE=""
+  fi
+
+  if writable_summary_dir="$(select_writable_dir "$SUMMARY_DIR")"; then
+    SUMMARY_DIR="$writable_summary_dir"
+    SUMMARY_JSON="${SUMMARY_DIR}/jarvis_sync_${RUN_ID}.json"
+  else
+    SUMMARY_JSON=""
+  fi
 }
 
 ########################################
@@ -476,6 +527,7 @@ step_fail() {
 finalize_summary() {
   local exit_code="${1:-0}"
   local steps_json
+  local summary_payload
   if [[ ${#STEP_RESULTS[@]} -eq 0 ]]; then
     steps_json="[]"
   else
@@ -484,7 +536,7 @@ finalize_summary() {
     steps_json="[$joined]"
   fi
 
-  cat > "$SUMMARY_JSON" <<EOF
+  summary_payload="$(cat <<EOF
 {
   "run_id": "$(printf '%s' "$RUN_ID")",
   "timestamp": "$(timestamp)",
@@ -497,6 +549,13 @@ finalize_summary() {
   "steps": $steps_json
 }
 EOF
+)"
+
+  LAST_SUMMARY_JSON="$summary_payload"
+
+  if [[ -n "$SUMMARY_JSON" ]]; then
+    printf '%s\n' "$summary_payload" > "$SUMMARY_JSON" 2>/dev/null || true
+  fi
 }
 
 on_error() {
@@ -516,10 +575,16 @@ on_error() {
 
 trap 'on_error $LINENO' ERR
 
-if [[ "$JSON_STDOUT" == "1" ]]; then
-  exec > >(tee -a "$LOG_FILE" >&2) 2>&1
-else
-  exec > >(tee -a "$LOG_FILE") 2>&1
+configure_runtime_output_paths
+
+if [[ "$LOG_TO_FILE" == "1" && -n "$LOG_FILE" ]]; then
+  if [[ "$JSON_STDOUT" == "1" ]]; then
+    exec > >(tee -a "$LOG_FILE" >&2) 2>&1
+  else
+    exec > >(tee -a "$LOG_FILE") 2>&1
+  fi
+elif [[ "$JSON_STDOUT" == "1" ]]; then
+  exec > >(cat >&2) 2>&1
 fi
 
 ########################################
