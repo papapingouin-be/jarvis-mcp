@@ -742,7 +742,9 @@ dir_is_writable() {
   [[ -n "$dir" ]] || return 1
   mkdir -p "$dir" >/dev/null 2>&1 || return 1
   local probe_file="$dir/.jarvis_write_test_$$"
-  : > "$probe_file" 2>/dev/null || return 1
+  if ! ( : > "$probe_file" ) >/dev/null 2>&1; then
+    return 1
+  fi
   rm -f "$probe_file" >/dev/null 2>&1 || true
   return 0
 }
@@ -989,6 +991,8 @@ print_git_remotes_masked() {
 }
 
 detect_ssh_auth_mode() {
+  local home_dir="${HOME:-}"
+
   if command -v sshpass >/dev/null 2>&1 && [[ -n "${JARVIS_srv_PSWD:-}" ]]; then
     SSH_AUTH_MODE="sshpass"
     return 0
@@ -1000,7 +1004,11 @@ detect_ssh_auth_mode() {
     return 0
   fi
 
-  if [[ -f "$HOME/.ssh/id_rsa" || -f "$HOME/.ssh/id_ed25519" ]]; then
+  if [[ -z "$home_dir" ]] && command -v getent >/dev/null 2>&1; then
+    home_dir="$(getent passwd "$(id -u)" | cut -d: -f6 2>/dev/null || true)"
+  fi
+
+  if [[ -n "$home_dir" && ( -f "$home_dir/.ssh/id_rsa" || -f "$home_dir/.ssh/id_ed25519" ) ]]; then
     SSH_AUTH_MODE="agent_or_default_key"
     return 0
   fi
