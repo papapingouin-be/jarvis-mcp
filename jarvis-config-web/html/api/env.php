@@ -78,7 +78,8 @@ if ($pdo !== null && $selectedScript !== '') {
   <div class="grid">
     <div class="kpi"><div class="label">Runtime ENV</div><div class="value"><?= h(count($runtimeEnv)) ?></div></div>
     <div class="kpi"><div class="label">Configs DB</div><div class="value"><?= h(count($appConfig)) ?></div></div>
-    <div class="kpi"><div class="label">Scripts avec config</div><div class="value"><?= h(count($scriptEnv)) ?></div></div>
+    <div class="kpi"><div class="label">Scripts en registry</div><div class="value"><?= h(count($registryRows)) ?></div></div>
+    <div class="kpi"><div class="label">Scripts avec valeurs DB</div><div class="value"><?= h(count($scriptEnv)) ?></div></div>
   </div>
 
   <?php if (!$d['ok']): ?>
