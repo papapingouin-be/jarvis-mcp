@@ -72,7 +72,7 @@ if ($pdo !== null && $selectedScript !== '') {
     }
 }
 ?>
-<div class="stack">
+<div class="stack" data-page-version="<?= h(jarvis_file_version(__FILE__)) ?>">
   <div class="notice">Cette vue distingue le runtime PHP des variables de scripts stockees en base et permet maintenant de les renseigner directement.</div>
 
   <div class="grid">

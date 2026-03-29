@@ -103,7 +103,7 @@ foreach ($rows as $row) {
     }
 }
 ?>
-<div class="stack">
+<div class="stack" data-page-version="<?= h(jarvis_file_version(__FILE__)) ?>">
   <div class="notice">
     Cette page ne cree plus les scripts a la main. Elle lit l inventaire publie par les scripts,
     puis synchronise la DB via <code>jarvis-script-registry.sh</code>.

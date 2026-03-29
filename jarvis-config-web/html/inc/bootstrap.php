@@ -16,6 +16,20 @@ function jarvis_ui_version(): string
     return 'V7.4';
 }
 
+function jarvis_file_version(string $path): string
+{
+    if (!is_file($path)) {
+        return 'php:missing';
+    }
+
+    $mtime = @filemtime($path);
+    $hash = @sha1_file($path);
+    $stamp = $mtime !== false ? date('Ymd.His', $mtime) : 'unknown';
+    $shortHash = is_string($hash) ? substr($hash, 0, 7) : 'nohash';
+
+    return 'php:' . $stamp . '-' . $shortHash;
+}
+
 function jarvis_data_path(string $s = ''): string
 {
     $base = '/var/www/data';

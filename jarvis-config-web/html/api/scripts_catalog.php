@@ -29,7 +29,7 @@ foreach ((array) ($scanPayload['scripts'] ?? []) as $script) {
     $diskByScriptName[$scriptName] = $script;
 }
 ?>
-<div class="stack">
+<div class="stack" data-page-version="<?= h(jarvis_file_version(__FILE__)) ?>">
     <div class="notice">
         Catalogue local base sur la registry. Il expose maintenant la version DB, la version detectee sur disque et leur coherence.
     </div>

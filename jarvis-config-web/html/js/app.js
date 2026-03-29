@@ -16,7 +16,8 @@ async function loadPage(page) {
     button.classList.toggle("active", button.dataset.page === page);
   });
 
-  document.getElementById("title").textContent = meta[page]?.[0] || page;
+  const baseTitle = meta[page]?.[0] || page;
+  document.getElementById("title").textContent = baseTitle;
   document.getElementById("subtitle").textContent = meta[page]?.[1] || "";
 
   const content = document.getElementById("content");
@@ -24,6 +25,8 @@ async function loadPage(page) {
 
   const response = await fetch(`api/${page}.php?_=${Date.now()}`);
   content.innerHTML = await response.text();
+  const pageVersion = content.firstElementChild?.dataset?.pageVersion || "";
+  document.getElementById("title").textContent = pageVersion ? `${baseTitle} ${pageVersion}` : baseTitle;
   bind();
 }
 

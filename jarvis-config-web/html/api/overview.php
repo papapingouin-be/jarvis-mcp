@@ -41,7 +41,7 @@ foreach ($rows as $row) {
     }
 }
 ?>
-<div class="grid">
+<div class="grid" data-page-version="<?= h(jarvis_file_version(__FILE__)) ?>">
   <div class="kpi"><div class="label">UI</div><div class="value"><?= h(jarvis_ui_version()) ?></div></div>
   <div class="kpi"><div class="label">DB</div><div class="value"><?= $d['ok']?'OK':'KO' ?></div></div>
   <div class="kpi"><div class="label">Scripts DB</div><div class="value"><?= h(count($rows)) ?></div></div>
