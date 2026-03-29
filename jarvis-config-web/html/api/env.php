@@ -12,6 +12,10 @@ $expectedRows = [];
 $flash = '';
 $flashType = 'success';
 
+if ($selectedScript === '' && $registryRows) {
+    $selectedScript = (string) ($registryRows[0]['script_name'] ?? '');
+}
+
 if ($pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         jarvis_check_csrf();
@@ -92,6 +96,44 @@ if ($pdo !== null && $selectedScript !== '') {
     <?php elseif (!$registryRows): ?>
       <p class="small">Aucun script en registry.</p>
     <?php else: ?>
+      <div class="notice info">
+        Choisis un script ci-dessous, puis renseigne ses variables et clique sur <strong>Sauvegarder en DB</strong>.
+      </div>
+
+      <table style="margin-bottom:12px">
+        <thead>
+          <tr>
+            <th>script</th>
+            <th>description</th>
+            <th>variables deja en DB</th>
+            <th>action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($registryRows as $row): ?>
+            <?php
+            $scriptName = (string) ($row['script_name'] ?? '');
+            $existingCount = count(script_env_values($pdo, $scriptName));
+            ?>
+            <tr>
+              <td><strong><?= h($scriptName) ?></strong></td>
+              <td><?= h((string) ($row['description'] ?? '')) ?></td>
+              <td><?= h((string) $existingCount) ?></td>
+              <td>
+                <form method="post" data-async-fragment="env">
+                  <?= jarvis_csrf_input() ?>
+                  <input type="hidden" name="form_action" value="select_script">
+                  <input type="hidden" name="script_name" value="<?= h($scriptName) ?>">
+                  <button class="<?= $selectedScript === $scriptName ? 'primary-btn' : 'secondary-btn' ?>" type="submit">
+                    <?= $selectedScript === $scriptName ? 'Script actif' : 'Configurer' ?>
+                  </button>
+                </form>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+
       <form method="post" data-async-fragment="env">
         <?= jarvis_csrf_input() ?>
         <input type="hidden" name="form_action" value="select_script">
@@ -157,6 +199,7 @@ if ($pdo !== null && $selectedScript !== '') {
           </table>
           <div class="actions" style="margin-top:12px">
             <button class="primary-btn" type="submit">Sauvegarder en DB</button>
+            <span class="small">Astuce: vide une valeur puis sauvegarde pour la supprimer de la DB.</span>
           </div>
         </form>
       <?php endif; ?>
