@@ -762,6 +762,94 @@ function script_service_find_in_metadata(array $metadata, string $serviceName): 
     return [];
 }
 
+function script_merge_service_lists(array $primary, array $secondary): array
+{
+    $merged = [];
+
+    foreach ([$primary, $secondary] as $list) {
+        foreach (script_services_from_metadata(['services' => $list]) as $service) {
+            $name = trim((string) ($service['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+
+            if (!isset($merged[$name])) {
+                $merged[$name] = $service;
+                continue;
+            }
+
+            $merged[$name] = [
+                'name' => $name,
+                'phase' => trim((string) ($merged[$name]['phase'] ?? $service['phase'] ?? '')),
+                'confirmed_required' => !empty($merged[$name]['confirmed_required']) || !empty($service['confirmed_required']),
+                'description' => trim((string) ($merged[$name]['description'] ?? '')) !== ''
+                    ? (string) $merged[$name]['description']
+                    : (string) ($service['description'] ?? ''),
+                'required_params' => array_values(array_unique(array_merge(
+                    is_array($merged[$name]['required_params'] ?? null) ? $merged[$name]['required_params'] : [],
+                    is_array($service['required_params'] ?? null) ? $service['required_params'] : []
+                ))),
+                'optional_params' => array_values(array_unique(array_merge(
+                    is_array($merged[$name]['optional_params'] ?? null) ? $merged[$name]['optional_params'] : [],
+                    is_array($service['optional_params'] ?? null) ? $service['optional_params'] : []
+                ))),
+                'required_env' => array_values(array_unique(array_merge(
+                    is_array($merged[$name]['required_env'] ?? null) ? $merged[$name]['required_env'] : [],
+                    is_array($service['required_env'] ?? null) ? $service['required_env'] : []
+                ))),
+                'optional_env' => array_values(array_unique(array_merge(
+                    is_array($merged[$name]['optional_env'] ?? null) ? $merged[$name]['optional_env'] : [],
+                    is_array($service['optional_env'] ?? null) ? $service['optional_env'] : []
+                ))),
+                'defaults' => is_array($merged[$name]['defaults'] ?? null) && count($merged[$name]['defaults']) > 0
+                    ? $merged[$name]['defaults']
+                    : (is_array($service['defaults'] ?? null) ? $service['defaults'] : []),
+                'example_params' => is_array($merged[$name]['example_params'] ?? null) && count($merged[$name]['example_params']) > 0
+                    ? $merged[$name]['example_params']
+                    : (is_array($service['example_params'] ?? null) ? $service['example_params'] : []),
+            ];
+        }
+    }
+
+    ksort($merged);
+    return array_values($merged);
+}
+
+function script_merge_metadata(array $preferred, array $fallback): array
+{
+    $merged = $preferred;
+
+    foreach (['script_name', 'file_name', 'description', 'version'] as $field) {
+        $current = trim((string) ($merged[$field] ?? ''));
+        if ($current === '' && trim((string) ($fallback[$field] ?? '')) !== '') {
+            $merged[$field] = $fallback[$field];
+        }
+    }
+
+    $merged['required_env'] = required_env_definitions(array_merge(
+        is_array($preferred['required_env'] ?? null) ? $preferred['required_env'] : [],
+        is_array($fallback['required_env'] ?? null) ? $fallback['required_env'] : []
+    ));
+
+    $merged['services'] = script_merge_service_lists(
+        is_array($preferred['services'] ?? null) ? $preferred['services'] : [],
+        is_array($fallback['services'] ?? null) ? $fallback['services'] : []
+    );
+
+    foreach (['capabilities', 'tags'] as $field) {
+        $merged[$field] = array_values(array_unique(array_merge(
+            is_array($preferred[$field] ?? null) ? $preferred[$field] : [],
+            is_array($fallback[$field] ?? null) ? $fallback[$field] : []
+        )));
+    }
+
+    if (!array_key_exists('supports_registry', $merged) && array_key_exists('supports_registry', $fallback)) {
+        $merged['supports_registry'] = $fallback['supports_registry'];
+    }
+
+    return $merged;
+}
+
 function script_expected_env_entries(PDO $pdo, string $scriptName): array
 {
     $bundle = script_metadata_bundle($pdo, $scriptName);
@@ -900,8 +988,10 @@ function script_metadata_bundle(PDO $pdo, string $scriptName): array
     $debug[] = $registryAttempt['attempt'];
     if ($registryAttempt['ok'] && is_array($registryAttempt['payload']['script'] ?? null)) {
         return [
-            'source' => 'registry-doc',
-            'metadata' => $registryAttempt['payload']['script'],
+            'source' => !empty($dbMetadata) ? 'registry-doc+db-metadata' : 'registry-doc',
+            'metadata' => !empty($dbMetadata)
+                ? script_merge_metadata($registryAttempt['payload']['script'], $dbMetadata)
+                : $registryAttempt['payload']['script'],
             'debug' => $debug,
         ];
     }
@@ -912,8 +1002,10 @@ function script_metadata_bundle(PDO $pdo, string $scriptName): array
     $debug[] = $selfDocAttempt['attempt'];
     if ($selfDocAttempt['ok'] && is_array($selfDocAttempt['payload']['script'] ?? null)) {
         return [
-            'source' => 'self-doc',
-            'metadata' => $selfDocAttempt['payload']['script'],
+            'source' => !empty($dbMetadata) ? 'self-doc+db-metadata' : 'self-doc',
+            'metadata' => !empty($dbMetadata)
+                ? script_merge_metadata($selfDocAttempt['payload']['script'], $dbMetadata)
+                : $selfDocAttempt['payload']['script'],
             'debug' => $debug,
         ];
     }
