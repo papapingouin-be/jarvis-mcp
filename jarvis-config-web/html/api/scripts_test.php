@@ -188,6 +188,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pc = precheck($pdo, $name);
         $row = $pc['row'];
         $cmd = build_cmd((string) $row['file_name'], $effectivePhase, $confirmed, $params);
+        $metadataBundle = script_metadata_bundle($pdo, $name);
+        $runtimeMetadata = is_array($metadataBundle['metadata'] ?? null) ? $metadataBundle['metadata'] : [];
+        $dbVersion = (string) ($row['version'] ?? '');
+        $runtimeVersion = (string) ($runtimeMetadata['version'] ?? '');
+        $versionState = jarvis_version_compare($dbVersion, $runtimeVersion);
+        $runtimeFile = scripts_root() . '/' . (string) $row['file_name'];
 
         $serviceValidation = [];
         if ($selectedService !== '') {
@@ -200,6 +206,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         echo '<tr><td>phase effective</td><td><span class="status up">OK</span></td><td><code>' . h($effectivePhase) . '</code></td></tr>';
         echo '<tr><td>actif</td><td><span class="status ' . ($pc['active'] ? 'up' : 'warn') . '">' . ($pc['active'] ? 'YES' : 'NO') . '</span></td><td>' . h((string) $row['is_active']) . '</td></tr>';
         echo '<tr><td>fichier present</td><td><span class="status ' . ($pc['file_found'] ? 'up' : 'down') . '">' . ($pc['file_found'] ? 'YES' : 'NO') . '</span></td><td><code>' . h((string) $row['file_name']) . '</code></td></tr>';
+        echo '<tr><td>fichier execute</td><td><span class="status ' . ($pc['file_found'] ? 'up' : 'down') . '">' . ($pc['file_found'] ? 'OK' : 'KO') . '</span></td><td><code>' . h($runtimeFile) . '</code></td></tr>';
+        echo '<tr><td>metadata source</td><td><span class="status up">INFO</span></td><td><code>' . h((string) ($metadataBundle['source'] ?? 'unknown')) . '</code></td></tr>';
+        echo '<tr><td>version DB</td><td><span class="status up">INFO</span></td><td><code>' . h(jarvis_version_value($dbVersion)) . '</code></td></tr>';
+        echo '<tr><td>version runtime</td><td><span class="status up">INFO</span></td><td><code>' . h(jarvis_version_value($runtimeVersion)) . '</code></td></tr>';
+        echo '<tr><td>etat version</td><td><span class="status ' . h((string) ($versionState['class'] ?? 'warn')) . '">' . h((string) ($versionState['label'] ?? 'INCONNUE')) . '</span></td><td>Compare la version en base et la version publiee par le script execute.</td></tr>';
         echo '<tr><td>config DB scripts</td><td><span class="status ' . ($pc['script_env_count'] > 0 ? 'up' : 'warn') . '">' . h((string) $pc['script_env_count']) . '</span></td><td>' . ($pc['script_env_count'] > 0 ? h(implode(', ', array_keys($pc['script_env']))) : 'Aucune variable chargee depuis jarvis_script_env_values') . '</td></tr>';
         echo '<tr><td>variables requises</td><td><span class="status ' . (count($pc['missing']) === 0 ? 'up' : 'warn') . '">' . (count($pc['missing']) === 0 ? 'OK' : 'MANQUANTES') . '</span></td><td>' . (count($pc['missing']) === 0 ? 'Toutes presentes en DB' : h(implode(', ', $pc['missing']))) . '</td></tr>';
         echo '</tbody></table></div>';

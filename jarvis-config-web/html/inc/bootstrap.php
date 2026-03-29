@@ -1460,8 +1460,10 @@ function install_script_into_runtime(string $relativePath, bool $overwrite = fal
 
 function precheck(PDO $pdo, string $scriptName): array
 {
+    $versionAvailable = column_exists($pdo, 'jarvis_script_registry', 'version');
+    $versionSelect = $versionAvailable ? "coalesce(version,'') as version," : '';
     $statement = $pdo->prepare(
-        "select script_name,file_name,coalesce(description,'') as description,required_env_json,is_active,updated_at from jarvis_script_registry where script_name=:n"
+        "select script_name,file_name,{$versionSelect}coalesce(description,'') as description,required_env_json,is_active,updated_at from jarvis_script_registry where script_name=:n"
     );
     $statement->execute(['n' => $scriptName]);
     $row = $statement->fetch();
