@@ -1,17 +1,16 @@
-import { access } from "node:fs/promises";
-import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { JarvisSyncBuildRedeployService } from "../config/jarvis-sync-build-redeploy-service.js";
+import { asScriptRunnerError } from "../modules/script_runner/services/errors.js";
 import type { RegisterableModule } from "../registry/types.js";
-
-const execFileAsync = promisify(execFile);
 
 const phaseSchema = z.enum(["collect", "execute"]);
 const modeSchema = z.enum([
   "self-doc",
   "registry-doc",
+  "list-services",
+  "describe-service",
+  "validate-service-input",
   "all",
   "sync",
   "install",
@@ -23,15 +22,26 @@ const modeSchema = z.enum([
   "restart",
 ]);
 
-function resolveToolPath(): string {
-  return path.resolve(
-    process.env.JARVIS_SYNC_BUILD_REDEPLOY_SCRIPT
-      ?? process.env.jarvis_tools_SYNC_BUILD_REDEPLOY_SCRIPT
-      ?? path.join(process.cwd(), "tools", "scripts", "jarvis_sync_build_redeploy.sh")
-  );
-}
+const executeModeSet = new Set([
+  "all",
+  "sync",
+  "install",
+  "build",
+  "deploy-web",
+  "deploy-scripts",
+  "mirror",
+  "webhook",
+  "restart",
+]);
 
-function toToolResponse(payload: Record<string, unknown>): {
+const metadataServiceModeSet = new Set(["describe-service", "validate-service-input"]);
+
+type ExecuteMode = "all" | "sync" | "install" | "build" | "deploy-web" | "deploy-scripts" | "mirror" | "webhook" | "restart";
+type MetadataMode = "self-doc" | "registry-doc" | "list-services" | "describe-service" | "validate-service-input";
+
+const service = new JarvisSyncBuildRedeployService();
+
+function toResponse(payload: Record<string, unknown>): {
   content: Array<{ type: "text"; text: string }>;
 } {
   return {
@@ -47,82 +57,64 @@ function toToolResponse(payload: Record<string, unknown>): {
 const jarvisSyncBuildRedeployModule: RegisterableModule = {
   type: "tool",
   name: "jarvis_sync_build_redeploy",
-  description: "Run the Jarvis sync/build/redeploy shell workflow and return its JSON summary.",
+  description: "Run or document the Jarvis sync/build/redeploy workflow without relying on shell helper scripts.",
   register(server: McpServer) {
     server.tool(
       "jarvis_sync_build_redeploy",
-      "Run the Jarvis sync/build/redeploy shell workflow and return its JSON summary.",
+      "Run or document the Jarvis sync/build/redeploy workflow without relying on shell helper scripts.",
       {
         phase: phaseSchema.optional().default("collect").describe("MCP phase: collect or execute."),
-        mode: modeSchema.optional().default("self-doc").describe("Workflow mode or metadata mode."),
-        confirmed: z.boolean().optional().default(false).describe("Required for execute modes unless dry_run=true."),
-        dry_run: z.boolean().optional().default(false).describe("Run execute modes in simulation mode."),
-        env_file: z.string().min(1).optional().describe("Optional path to the .env file consumed by the shell script."),
+        mode: modeSchema.optional().default("self-doc").describe("Metadata mode or workflow mode."),
+        confirmed: z.boolean().optional().default(false).describe("Required for execute unless dry_run=true."),
+        dry_run: z.boolean().optional().default(false).describe("Show intended commands without executing them."),
+        env_file: z.string().min(1).optional().describe("Optional dotenv file merged before DB-backed config values."),
+        service: z.enum([
+          "all",
+          "sync",
+          "install",
+          "build",
+          "deploy-web",
+          "deploy-scripts",
+          "mirror",
+          "webhook",
+          "restart",
+        ]).optional().describe("Execution service used by describe-service or validate-service-input."),
       },
       async (args) => {
-        const toolPath = resolveToolPath();
-
         try {
-          await access(toolPath);
-        } catch {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  ok: false,
-                  summary: "Redeploy tool script not found",
-                  details: `Expected script at ${toolPath}`,
-                }),
-              },
-            ],
-          };
-        }
+          if (args.phase === "execute") {
+            if (!executeModeSet.has(args.mode)) {
+              return toResponse({
+                ok: false,
+                summary: "Invalid execute mode",
+                details: `Mode ${args.mode} is metadata-only and cannot run in execute phase`,
+              });
+            }
 
-        const execArgs: Array<string> = [
-          "--phase",
-          args.phase,
-          "--confirmed",
-          args.confirmed ? "true" : "false",
-          "--param",
-          `mode=${args.mode}`,
-          "--param",
-          `dry_run=${args.dry_run ? "true" : "false"}`,
-          "--json-stdout",
-        ];
+            return toResponse(await service.execute({
+              mode: args.mode as ExecuteMode,
+              confirmed: args.confirmed,
+              dry_run: args.dry_run,
+              env_file: args.env_file,
+            }));
+          }
 
-        if (args.env_file) {
-          execArgs.push("--param", `env_file=${args.env_file}`);
-        }
+          if (metadataServiceModeSet.has(args.mode) && args.service === undefined) {
+            return toResponse({
+              ok: false,
+              summary: "Missing required service parameter",
+              details: `Mode ${args.mode} requires service=...`,
+            });
+          }
 
-        try {
-          const { stdout } = await execFileAsync(toolPath, execArgs, {
-            timeout: 15 * 60 * 1000,
-            maxBuffer: 1024 * 1024,
-            env: process.env,
-          });
-
-          const parsed = JSON.parse(stdout.trim()) as Record<string, unknown>;
-          return toToolResponse({
-            ok: true,
-            tool: "jarvis_sync_build_redeploy",
-            result: parsed,
-          });
+          return toResponse(await service.collect({
+            mode: args.mode as MetadataMode,
+            dry_run: args.dry_run,
+            env_file: args.env_file,
+            service: args.service,
+          }));
         } catch (error: unknown) {
-          const safeError = error as {
-            message?: string;
-            stdout?: string | Buffer;
-            stderr?: string | Buffer;
-          };
-
-          const stdout = typeof safeError.stdout === "string"
-            ? safeError.stdout
-            : safeError.stdout?.toString("utf8") ?? "";
-          const stderr = typeof safeError.stderr === "string"
-            ? safeError.stderr
-            : safeError.stderr?.toString("utf8") ?? "";
-
+          const safeError = asScriptRunnerError(error);
           return {
             isError: true,
             content: [
@@ -130,11 +122,11 @@ const jarvisSyncBuildRedeployModule: RegisterableModule = {
                 type: "text",
                 text: JSON.stringify({
                   ok: false,
-                  tool: "jarvis_sync_build_redeploy",
-                  summary: "Redeploy workflow failed",
-                  details: safeError.message ?? "Unknown error",
-                  stdout: stdout.trim() || null,
-                  stderr: stderr.trim() || null,
+                  error: {
+                    code: safeError.code,
+                    message: safeError.safeMessage,
+                    context: safeError.context ?? {},
+                  },
                 }),
               },
             ],
