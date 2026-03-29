@@ -252,6 +252,64 @@ function script_env_values(PDO $pdo, string $scriptName): array
     return $out;
 }
 
+function script_env_upsert_many(PDO $pdo, string $scriptName, array $values): int
+{
+    if (!table_exists($pdo, 'jarvis_script_env_values')) {
+        throw new RuntimeException('La table jarvis_script_env_values n existe pas.');
+    }
+
+    $count = 0;
+    $statement = $pdo->prepare(
+        'insert into jarvis_script_env_values(script_name, env_name, env_value, updated_at)
+         values(:script_name, :env_name, :env_value, now())
+         on conflict (script_name, env_name)
+         do update set env_value = excluded.env_value, updated_at = now()'
+    );
+
+    foreach ($values as $envName => $envValue) {
+        $name = trim((string) $envName);
+        if ($name === '') {
+            continue;
+        }
+
+        $statement->execute([
+            'script_name' => $scriptName,
+            'env_name' => $name,
+            'env_value' => (string) $envValue,
+        ]);
+        $count++;
+    }
+
+    return $count;
+}
+
+function script_env_delete_many(PDO $pdo, string $scriptName, array $envNames): int
+{
+    if (!table_exists($pdo, 'jarvis_script_env_values')) {
+        throw new RuntimeException('La table jarvis_script_env_values n existe pas.');
+    }
+
+    $statement = $pdo->prepare(
+        'delete from jarvis_script_env_values where script_name=:script_name and env_name=:env_name'
+    );
+    $count = 0;
+
+    foreach ($envNames as $envName) {
+        $name = trim((string) $envName);
+        if ($name === '') {
+            continue;
+        }
+
+        $statement->execute([
+            'script_name' => $scriptName,
+            'env_name' => $name,
+        ]);
+        $count += $statement->rowCount();
+    }
+
+    return $count;
+}
+
 function script_env_grouped(PDO $pdo): array
 {
     $out = [];
@@ -683,6 +741,8 @@ function script_services_from_metadata(array $metadata): array
             'description' => trim((string) ($service['description'] ?? '')),
             'required_params' => is_array($service['required_params'] ?? null) ? array_values($service['required_params']) : [],
             'optional_params' => is_array($service['optional_params'] ?? null) ? array_values($service['optional_params']) : [],
+            'required_env' => is_array($service['required_env'] ?? null) ? array_values($service['required_env']) : [],
+            'optional_env' => is_array($service['optional_env'] ?? null) ? array_values($service['optional_env']) : [],
             'defaults' => is_array($service['defaults'] ?? null) ? $service['defaults'] : [],
             'example_params' => is_array($service['example_params'] ?? null) ? $service['example_params'] : [],
         ];
@@ -700,6 +760,112 @@ function script_service_find_in_metadata(array $metadata, string $serviceName): 
     }
 
     return [];
+}
+
+function script_expected_env_entries(PDO $pdo, string $scriptName): array
+{
+    $bundle = script_metadata_bundle($pdo, $scriptName);
+    $metadata = is_array($bundle['metadata'] ?? null) ? $bundle['metadata'] : [];
+    $definitions = required_env_definitions($metadata['required_env'] ?? []);
+    $entries = [];
+
+    foreach ($definitions as $definition) {
+        if (!is_array($definition)) {
+            continue;
+        }
+
+        $name = trim((string) ($definition['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+
+        $entries[$name] = [
+            'name' => $name,
+            'required' => !array_key_exists('required', $definition) || (bool) $definition['required'],
+            'secret' => !empty($definition['secret']),
+            'description' => trim((string) ($definition['description'] ?? '')),
+            'sources' => ['script'],
+            'services' => [],
+        ];
+    }
+
+    foreach (script_services_from_metadata($metadata) as $service) {
+        $serviceName = trim((string) ($service['name'] ?? ''));
+        foreach ([
+            'required_env' => true,
+            'optional_env' => false,
+        ] as $field => $required) {
+            $envNames = is_array($service[$field] ?? null) ? $service[$field] : [];
+            foreach ($envNames as $envName) {
+                $name = trim((string) $envName);
+                if ($name === '') {
+                    continue;
+                }
+
+                if (!isset($entries[$name])) {
+                    $entries[$name] = [
+                        'name' => $name,
+                        'required' => false,
+                        'secret' => false,
+                        'description' => '',
+                        'sources' => [],
+                        'services' => [],
+                    ];
+                }
+
+                $entries[$name]['required'] = !empty($entries[$name]['required']) || $required;
+                $entries[$name]['sources'][] = $required ? 'service-required-env' : 'service-optional-env';
+                if ($serviceName !== '') {
+                    $entries[$name]['services'][] = $serviceName;
+                }
+            }
+        }
+    }
+
+    foreach ($entries as $name => $entry) {
+        $entries[$name]['sources'] = array_values(array_unique($entry['sources']));
+        $entries[$name]['services'] = array_values(array_unique($entry['services']));
+    }
+
+    ksort($entries);
+    return array_values($entries);
+}
+
+function script_expected_env_with_values(PDO $pdo, string $scriptName): array
+{
+    $expected = script_expected_env_entries($pdo, $scriptName);
+    $stored = script_env_values($pdo, $scriptName);
+    $byName = [];
+
+    foreach ($expected as $entry) {
+        $name = (string) ($entry['name'] ?? '');
+        if ($name === '') {
+            continue;
+        }
+        $entry['stored'] = array_key_exists($name, $stored);
+        $entry['value'] = $stored[$name] ?? '';
+        $byName[$name] = $entry;
+    }
+
+    foreach ($stored as $name => $value) {
+        if (isset($byName[$name])) {
+            continue;
+        }
+
+        $byName[$name] = [
+            'name' => $name,
+            'required' => false,
+            'secret' => false,
+            'description' => '',
+            'sources' => ['db-only'],
+            'services' => [],
+            'stored' => true,
+            'value' => $value,
+        ];
+    }
+
+    ksort($byName);
+    return array_values($byName);
 }
 
 function script_metadata_bundle(PDO $pdo, string $scriptName): array
