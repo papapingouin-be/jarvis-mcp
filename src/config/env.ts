@@ -50,7 +50,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "jarvis_sync_build_redeploy.sh": {
     name: "jarvis_sync_build_redeploy.sh",
     file_name: "jarvis_sync_build_redeploy.sh",
-    version: "1.3.0",
+    version: "1.3.1",
     required_env: [
       {
         name: "jarvis_tools_GITHUB_TOKEN",
@@ -93,6 +93,18 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
         required: false,
         secret: false,
         description: "SSH user for deploy target.",
+      },
+      {
+        name: "JARVIS_SSH_KEY_PATH",
+        required: false,
+        secret: false,
+        description: "Optional SSH private key path for deploy target authentication.",
+      },
+      {
+        name: "JARVIS_srv_PSWD",
+        required: false,
+        secret: true,
+        description: "Optional SSH password used when sshpass authentication is preferred.",
       },
     ],
     description: "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.",
