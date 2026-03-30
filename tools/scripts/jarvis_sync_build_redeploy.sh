@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 ########################################
 # jarvis_sync_build_redeploy.sh
-# Repo script version: 2.2
+# Repo script version: 1.2.0
 # Role: canonical implementation used by registry/config-web/runtime
 # Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
 #

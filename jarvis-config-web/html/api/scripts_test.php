@@ -13,6 +13,28 @@ if (!table_exists($pdo, 'jarvis_script_registry')) {
     exit;
 }
 
+function scripts_test_metadata_summary(PDO $pdo, string $scriptName): array
+{
+    $pc = precheck($pdo, $scriptName);
+    $row = $pc['row'];
+    $metadataBundle = script_metadata_bundle($pdo, $scriptName);
+    $runtimeMetadata = is_array($metadataBundle['metadata'] ?? null) ? $metadataBundle['metadata'] : [];
+    $dbVersion = (string) ($row['version'] ?? '');
+    $runtimeVersion = (string) ($runtimeMetadata['version'] ?? '');
+    $versionState = jarvis_version_compare($dbVersion, $runtimeVersion);
+
+    return [
+        'script_name' => (string) ($row['script_name'] ?? $scriptName),
+        'file_name' => (string) ($row['file_name'] ?? ''),
+        'runtime_file' => scripts_root() . '/' . (string) ($row['file_name'] ?? ''),
+        'metadata_source' => (string) ($metadataBundle['source'] ?? 'unknown'),
+        'db_version' => jarvis_version_value($dbVersion),
+        'runtime_version' => jarvis_version_value($runtimeVersion),
+        'version_state' => $versionState,
+        'file_found' => !empty($pc['file_found']),
+    ];
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') === 'example') {
     header('Content-Type: application/json; charset=utf-8');
 
@@ -56,6 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') ===
             'services' => $details['services'] ?? [],
             'source' => $details['source'] ?? '',
             'debug' => $details['debug'] ?? [],
+            'metadata_summary' => scripts_test_metadata_summary($pdo, $name),
         ], JSON_UNESCAPED_SLASHES);
     } catch (Throwable $e) {
         http_response_code(400);
@@ -85,6 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') ===
             'service' => $details['service'] ?? [],
             'source' => $details['source'] ?? '',
             'debug' => $details['debug'] ?? [],
+            'metadata_summary' => scripts_test_metadata_summary($pdo, $name),
         ], JSON_UNESCAPED_SLASHES);
     } catch (Throwable $e) {
         http_response_code(400);
@@ -121,6 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_GET['action'] ?? '') ==
             'validation' => $details['validation'] ?? [],
             'source' => $details['source'] ?? '',
             'debug' => $details['debug'] ?? [],
+            'metadata_summary' => scripts_test_metadata_summary($pdo, $name),
         ], JSON_UNESCAPED_SLASHES);
     } catch (Throwable $e) {
         http_response_code(400);
@@ -188,12 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pc = precheck($pdo, $name);
         $row = $pc['row'];
         $cmd = build_cmd((string) $row['file_name'], $effectivePhase, $confirmed, $params);
-        $metadataBundle = script_metadata_bundle($pdo, $name);
-        $runtimeMetadata = is_array($metadataBundle['metadata'] ?? null) ? $metadataBundle['metadata'] : [];
-        $dbVersion = (string) ($row['version'] ?? '');
-        $runtimeVersion = (string) ($runtimeMetadata['version'] ?? '');
-        $versionState = jarvis_version_compare($dbVersion, $runtimeVersion);
-        $runtimeFile = scripts_root() . '/' . (string) $row['file_name'];
+        $metadataSummary = scripts_test_metadata_summary($pdo, $name);
 
         $serviceValidation = [];
         if ($selectedService !== '') {
@@ -206,11 +226,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         echo '<tr><td>phase effective</td><td><span class="status up">OK</span></td><td><code>' . h($effectivePhase) . '</code></td></tr>';
         echo '<tr><td>actif</td><td><span class="status ' . ($pc['active'] ? 'up' : 'warn') . '">' . ($pc['active'] ? 'YES' : 'NO') . '</span></td><td>' . h((string) $row['is_active']) . '</td></tr>';
         echo '<tr><td>fichier present</td><td><span class="status ' . ($pc['file_found'] ? 'up' : 'down') . '">' . ($pc['file_found'] ? 'YES' : 'NO') . '</span></td><td><code>' . h((string) $row['file_name']) . '</code></td></tr>';
-        echo '<tr><td>fichier execute</td><td><span class="status ' . ($pc['file_found'] ? 'up' : 'down') . '">' . ($pc['file_found'] ? 'OK' : 'KO') . '</span></td><td><code>' . h($runtimeFile) . '</code></td></tr>';
-        echo '<tr><td>metadata source</td><td><span class="status up">INFO</span></td><td><code>' . h((string) ($metadataBundle['source'] ?? 'unknown')) . '</code></td></tr>';
-        echo '<tr><td>version DB</td><td><span class="status up">INFO</span></td><td><code>' . h(jarvis_version_value($dbVersion)) . '</code></td></tr>';
-        echo '<tr><td>version runtime</td><td><span class="status up">INFO</span></td><td><code>' . h(jarvis_version_value($runtimeVersion)) . '</code></td></tr>';
-        echo '<tr><td>etat version</td><td><span class="status ' . h((string) ($versionState['class'] ?? 'warn')) . '">' . h((string) ($versionState['label'] ?? 'INCONNUE')) . '</span></td><td>Compare la version en base et la version publiee par le script execute.</td></tr>';
+        echo '<tr><td>fichier execute</td><td><span class="status ' . (!empty($metadataSummary['file_found']) ? 'up' : 'down') . '">' . (!empty($metadataSummary['file_found']) ? 'OK' : 'KO') . '</span></td><td><code>' . h((string) ($metadataSummary['runtime_file'] ?? '')) . '</code></td></tr>';
+        echo '<tr><td>metadata source</td><td><span class="status up">INFO</span></td><td><code>' . h((string) ($metadataSummary['metadata_source'] ?? 'unknown')) . '</code></td></tr>';
+        echo '<tr><td>version DB</td><td><span class="status up">INFO</span></td><td><code>' . h((string) ($metadataSummary['db_version'] ?? '-')) . '</code></td></tr>';
+        echo '<tr><td>version runtime</td><td><span class="status up">INFO</span></td><td><code>' . h((string) ($metadataSummary['runtime_version'] ?? '-')) . '</code></td></tr>';
+        echo '<tr><td>etat version</td><td><span class="status ' . h((string) (($metadataSummary['version_state']['class'] ?? 'warn'))) . '">' . h((string) (($metadataSummary['version_state']['label'] ?? 'INCONNUE'))) . '</span></td><td>Compare la version en base et la version publiee par le script execute.</td></tr>';
         echo '<tr><td>config DB scripts</td><td><span class="status ' . ($pc['script_env_count'] > 0 ? 'up' : 'warn') . '">' . h((string) $pc['script_env_count']) . '</span></td><td>' . ($pc['script_env_count'] > 0 ? h(implode(', ', array_keys($pc['script_env']))) : 'Aucune variable chargee depuis jarvis_script_env_values') . '</td></tr>';
         echo '<tr><td>variables requises</td><td><span class="status ' . (count($pc['missing']) === 0 ? 'up' : 'warn') . '">' . (count($pc['missing']) === 0 ? 'OK' : 'MANQUANTES') . '</span></td><td>' . (count($pc['missing']) === 0 ? 'Toutes presentes en DB' : h(implode(', ', $pc['missing']))) . '</td></tr>';
         echo '</tbody></table></div>';
@@ -273,7 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $rows = registry_all($pdo);
 ?>
-<div class="stack" data-page-version="<?= h(jarvis_file_version(__FILE__)) ?>"><div class="notice">Parcours recommande : <strong>1. choisir un script</strong>, <strong>2. choisir un service</strong>, <strong>3. verifier les champs connus</strong>, <strong>4. lancer un pre-check</strong>, <strong>5. executer si tout est vert</strong>.</div><div class="two"><div class="card"><h3>Parametres de test</h3><form id="scripts-test-form" method="post"><?= jarvis_csrf_input() ?><p><label>Script</label><select id="scripts-test-script-name" name="script_name"><option value="">-- Choisir un script --</option><?php foreach($rows as $r): ?><option value="<?= h((string) $r['script_name']) ?>"><?= h((string) $r['script_name']) ?> - <?= h((string) $r['description']) ?></option><?php endforeach; ?></select></p><p><label>Action / service propose par le script</label><select id="scripts-test-service-name" name="service_name"><option value="">-- Choisir un service --</option></select><span id="scripts-test-service-status" class="small">Choisis un script pour charger ses services.</span></p><p><label>Source metadata/service</label><input id="scripts-test-service-source" type="text" value="" readonly><span class="small">Indique si la vue a utilise <code>list-services</code>, <code>describe-service</code>, <code>registry-doc</code>, <code>self-doc</code> ou un fallback local.</span></p><p><label>Phase MCP utilisee</label><input id="scripts-test-phase-display" type="text" value="" readonly><input id="scripts-test-phase" type="hidden" name="phase" value="collect"></p><p><label>Confirmed</label><select id="scripts-test-confirmed" name="confirmed"><option value="false">false</option><option value="true">true</option></select><span class="small">Renseigne automatiquement depuis le service quand disponible.</span></p><p><label>Mode du test</label><select name="mode"><option value="precheck">Pre-check</option><option value="simulate">Simulation</option><option value="execute">Execution reelle</option></select></p><p><label>params JSON</label><textarea id="scripts-test-params-json" name="params_json">{}</textarea></p><div class="actions"><button class="secondary-btn" id="scripts-test-service-info-btn" type="button">Infos du service</button><button class="secondary-btn" id="scripts-test-validate-btn" type="button">Verifier infos connues</button><button class="secondary-btn" id="scripts-test-example-btn" type="button">Exemple params JSON</button><button class="primary-btn" type="submit">Lancer le test</button></div></form></div><div class="card"><h3>Convention supportee</h3><pre>bash <?= h(scripts_root()) ?>/&lt;fichier&gt;
+<div class="stack" data-page-version="<?= h(jarvis_file_version(__FILE__)) ?>"><div class="notice">Parcours recommande : <strong>1. choisir un script</strong>, <strong>2. choisir un service</strong>, <strong>3. verifier les champs connus</strong>, <strong>4. lancer un pre-check</strong>, <strong>5. executer si tout est vert</strong>.</div><div class="two"><div class="card"><h3>Parametres de test</h3><form id="scripts-test-form" method="post"><?= jarvis_csrf_input() ?><p><label>Script</label><select id="scripts-test-script-name" name="script_name"><option value="">-- Choisir un script --</option><?php foreach($rows as $r): ?><option value="<?= h((string) $r['script_name']) ?>"><?= h((string) $r['script_name']) ?> - <?= h((string) $r['description']) ?></option><?php endforeach; ?></select></p><p><label>Action / service propose par le script</label><select id="scripts-test-service-name" name="service_name"><option value="">-- Choisir un service --</option></select><span id="scripts-test-service-status" class="small">Choisis un script pour charger ses services.</span></p><p><label>Source metadata/service</label><input id="scripts-test-service-source" type="text" value="" readonly><span class="small">Indique si la vue a utilise <code>list-services</code>, <code>describe-service</code>, <code>registry-doc</code>, <code>self-doc</code> ou un fallback local.</span></p><p><label>Version DB</label><input id="scripts-test-db-version" type="text" value="" readonly></p><p><label>Version runtime</label><input id="scripts-test-runtime-version" type="text" value="" readonly></p><p><label>Etat version</label><input id="scripts-test-version-state" type="text" value="" readonly></p><p><label>Fichier execute</label><input id="scripts-test-runtime-file" type="text" value="" readonly></p><p><label>Phase MCP utilisee</label><input id="scripts-test-phase-display" type="text" value="" readonly><input id="scripts-test-phase" type="hidden" name="phase" value="collect"></p><p><label>Confirmed</label><select id="scripts-test-confirmed" name="confirmed"><option value="false">false</option><option value="true">true</option></select><span class="small">Renseigne automatiquement depuis le service quand disponible.</span></p><p><label>Mode du test</label><select name="mode"><option value="precheck">Pre-check</option><option value="simulate">Simulation</option><option value="execute">Execution reelle</option></select></p><p><label>params JSON</label><textarea id="scripts-test-params-json" name="params_json">{}</textarea></p><div class="actions"><button class="secondary-btn" id="scripts-test-service-info-btn" type="button">Infos du service</button><button class="secondary-btn" id="scripts-test-validate-btn" type="button">Verifier infos connues</button><button class="secondary-btn" id="scripts-test-example-btn" type="button">Exemple params JSON</button><button class="primary-btn" type="submit">Lancer le test</button></div></form></div><div class="card"><h3>Convention supportee</h3><pre>bash <?= h(scripts_root()) ?>/&lt;fichier&gt;
   --phase &lt;collect|execute&gt;
   --confirmed &lt;true|false&gt;
   --param key=value</pre><p class="small">Le runner PHP injecte les variables de script depuis <code>jarvis_script_env_values</code> et ajoute automatiquement <code>mode=&lt;service&gt;</code> quand un service est selectionne.</p><p class="small">Les actions, les details d action, les exemples JSON et la validation des champs connus proviennent du script lorsqu il publie ces metadonnees.</p></div></div><div id="scripts-test-help" class="card"><h3>Phases et modes</h3><p class="small">Choisis un script pour afficher ses phases MCP et ses modes utiles.</p></div><div id="scripts-test-debug" class="card"><h3>Debug metadata/services</h3><p class="small">Choisis un script pour afficher le detail des tentatives de lecture MCP.</p></div><div id="scripts-test-result" class="card"><h3>Resultat</h3><p class="small">Le resultat du test apparaitra ici.</p></div></div>

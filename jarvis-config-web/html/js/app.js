@@ -274,6 +274,29 @@ function setServiceSource(source) {
   }
 }
 
+function setScriptsTestVersionInfo(summary) {
+  const dbVersionInput = document.getElementById("scripts-test-db-version");
+  const runtimeVersionInput = document.getElementById("scripts-test-runtime-version");
+  const versionStateInput = document.getElementById("scripts-test-version-state");
+  const runtimeFileInput = document.getElementById("scripts-test-runtime-file");
+
+  if (dbVersionInput) {
+    dbVersionInput.value = summary?.db_version || "";
+  }
+
+  if (runtimeVersionInput) {
+    runtimeVersionInput.value = summary?.runtime_version || "";
+  }
+
+  if (versionStateInput) {
+    versionStateInput.value = summary?.version_state?.label || "";
+  }
+
+  if (runtimeFileInput) {
+    runtimeFileInput.value = summary?.runtime_file || "";
+  }
+}
+
 function renderDebugPayload(debug, source = "") {
   const rows = Array.isArray(debug) ? debug : [];
   const list = rows.length
@@ -421,6 +444,7 @@ async function loadScriptServices() {
   if (scriptName.trim() === "") {
     setPhaseFields(phaseInput, phaseDisplayInput, "");
     setServiceSource("");
+    setScriptsTestVersionInfo(null);
     updateScriptsTestDebug([], "");
     return;
   }
@@ -440,6 +464,7 @@ async function loadScriptServices() {
   );
   const payload = await response.json();
   setServiceSource(payload.source || "");
+  setScriptsTestVersionInfo(payload.metadata_summary || null);
   updateScriptsTestDebug(payload.debug || [], payload.source || "");
 
   if (!payload.ok || !Array.isArray(payload.services)) {
@@ -515,6 +540,7 @@ async function fetchAndRenderServiceInfo({
     );
     const payload = await response.json();
     setServiceSource(payload.source || "");
+    setScriptsTestVersionInfo(payload.metadata_summary || null);
     updateScriptsTestDebug(payload.debug || [], payload.source || "");
 
     if (!payload.ok) {
@@ -704,6 +730,7 @@ function bindScriptsTestForm() {
         });
         const payload = await response.json();
         setServiceSource(payload.source || "");
+        setScriptsTestVersionInfo(payload.metadata_summary || null);
         updateScriptsTestDebug(payload.debug || [], payload.source || "");
 
         if (!payload.ok) {
