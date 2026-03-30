@@ -83,6 +83,7 @@ type ResolvedConfig = {
   webCodeLocalSubdir: string;
   webRemotePath: string;
   webRemoteDelete: boolean;
+  webRsyncExcludes: Array<string>;
   scriptSourceLocalSubdir: string;
   scriptRemotePath: string;
   scriptRemoteDelete: boolean;
@@ -303,6 +304,10 @@ async function resolveConfig(envFile?: string): Promise<ResolvedConfig> {
     webCodeLocalSubdir: firstNonEmpty(mergedEnv, "WEB_CODE_LOCAL_SUBDIR") ?? "jarvis-config-web",
     webRemotePath: firstNonEmpty(mergedEnv, "WEB_REMOTE_PATH") ?? "/opt/jarvis/config-web",
     webRemoteDelete: parseBoolean(firstNonEmpty(mergedEnv, "WEB_REMOTE_DELETE"), true),
+    webRsyncExcludes: (firstNonEmpty(mergedEnv, "WEB_RSYNC_EXCLUDES") ?? "data/scripts/")
+      .split(";")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
     scriptSourceLocalSubdir: firstNonEmpty(mergedEnv, "SCRIPT_SOURCE_LOCAL_SUBDIR") ?? "tools/scripts",
     scriptRemotePath: firstNonEmpty(mergedEnv, "SCRIPT_REMOTE_PATH") ?? "/opt/jarvis/shared/scripts",
     scriptRemoteDelete: parseBoolean(firstNonEmpty(mergedEnv, "SCRIPT_REMOTE_DELETE"), true),
@@ -370,12 +375,16 @@ function buildRsyncCommand(
   config: ResolvedConfig,
   sourcePath: string,
   remotePath: string,
-  shouldDelete: boolean
+  shouldDelete: boolean,
+  excludes: Array<string> = []
 ): CommandSpec {
   const [host, port = "22"] = config.sshHostPort.split(":");
   const rsyncArgs = ["-avz"];
   if (shouldDelete) {
     rsyncArgs.push("--delete");
+  }
+  for (const exclude of excludes) {
+    rsyncArgs.push("--exclude", exclude);
   }
 
   let sshTransport = `ssh -p ${port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`;
@@ -733,9 +742,10 @@ export class JarvisSyncBuildRedeployService {
           );
           const remotePath = step === "deploy-web" ? config.webRemotePath : config.scriptRemotePath;
           const shouldDelete = step === "deploy-web" ? config.webRemoteDelete : config.scriptRemoteDelete;
+          const excludes = step === "deploy-web" ? config.webRsyncExcludes : [];
 
           await executeCommand(this.commandRunner, buildSshCommand(config, `mkdir -p '${remotePath}'`), config.env, trace, input.dry_run);
-          await executeCommand(this.commandRunner, buildRsyncCommand(config, sourcePath, remotePath, shouldDelete), config.env, trace, input.dry_run);
+          await executeCommand(this.commandRunner, buildRsyncCommand(config, sourcePath, remotePath, shouldDelete, excludes), config.env, trace, input.dry_run);
 
           if (step === "deploy-scripts") {
             await executeCommand(

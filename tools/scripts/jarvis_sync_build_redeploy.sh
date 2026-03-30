@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 ########################################
 # jarvis_sync_build_redeploy.sh
-# Repo script version: 1.3.3
+# Repo script version: 1.3.4
 # Role: canonical implementation used by registry/config-web/runtime
 # Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
 #
@@ -516,7 +516,7 @@ self_doc_json() {
     "script_name":"%s",
     "file_name":"%s",
     "description":"%s",
-    "version":"1.3.3",
+    "version":"1.3.4",
     "supports_registry":true,
     "required_env":[
       {"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},
@@ -549,7 +549,7 @@ self_doc_json() {
 registry_doc_json() {
   local file_name
   file_name="$(basename "${BASH_SOURCE[0]}")"
-  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.3.3","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
+  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.3.4","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.")" \
@@ -937,6 +937,7 @@ GITHUB_REMOTE_NAME="${GITHUB_REMOTE_NAME:-github-src}"
 WEB_CODE_LOCAL_SUBDIR="${WEB_CODE_LOCAL_SUBDIR:-jarvis-config-web}"
 WEB_REMOTE_PATH="${WEB_REMOTE_PATH:-/opt/jarvis/config-web}"
 WEB_REMOTE_DELETE="${WEB_REMOTE_DELETE:-1}"
+WEB_RSYNC_EXCLUDES="${WEB_RSYNC_EXCLUDES:-data/scripts/}"
 
 SCRIPT_SOURCE_LOCAL_SUBDIR="${SCRIPT_SOURCE_LOCAL_SUBDIR:-tools/scripts}"
 SCRIPT_REMOTE_PATH="${SCRIPT_REMOTE_PATH:-/opt/jarvis/shared/scripts}"
@@ -1087,6 +1088,7 @@ rsync_copy_dir() {
   local remote_path="$2"
   local delete_mode="$3"
   local exit_code="$4"
+  local excludes_raw="${5:-}"
 
   local host port
   host="$(ssh_host)"
@@ -1099,6 +1101,18 @@ rsync_copy_dir() {
     rsync_delete_arg+=(--delete)
   fi
 
+  local rsync_exclude_args=()
+  if [[ -n "$excludes_raw" ]]; then
+    local exclude_entry
+    OLD_IFS="$IFS"
+    IFS=';'
+    for exclude_entry in $excludes_raw; do
+      [[ -n "$exclude_entry" ]] || continue
+      rsync_exclude_args+=(--exclude "$exclude_entry")
+    done
+    IFS="$OLD_IFS"
+  fi
+
   remote_exec "mkdir -p '$remote_path'"
 
   case "$SSH_AUTH_MODE" in
@@ -1107,6 +1121,7 @@ rsync_copy_dir() {
         "sshpass rsync -avz ${rsync_delete_arg[*]:-} -e 'ssh -p $port -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' ${source_path}/ ${JARVIS_srv_USER}@${host}:${remote_path}/" \
         env SSHPASS="$JARVIS_srv_PSWD" sshpass -e rsync -avz \
           "${rsync_delete_arg[@]}" \
+          "${rsync_exclude_args[@]}" \
           -e "ssh -p $port -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
           "${source_path}/" \
           "${JARVIS_srv_USER}@${host}:${remote_path}/"
@@ -1114,6 +1129,7 @@ rsync_copy_dir() {
     keyfile)
       run rsync -avz \
         "${rsync_delete_arg[@]}" \
+        "${rsync_exclude_args[@]}" \
         -e "ssh -i $JARVIS_SSH_KEY_PATH -p $port -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
         "${source_path}/" \
         "${JARVIS_srv_USER}@${host}:${remote_path}/"
@@ -1121,6 +1137,7 @@ rsync_copy_dir() {
     agent_or_default_key)
       run rsync -avz \
         "${rsync_delete_arg[@]}" \
+        "${rsync_exclude_args[@]}" \
         -e "ssh -p $port -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
         "${source_path}/" \
         "${JARVIS_srv_USER}@${host}:${remote_path}/"
@@ -1150,8 +1167,9 @@ deploy_web_code() {
   info "Serveur distant        = ${JARVIS_srv_USER}@$(mask_host "$JARVIS_srv_SSH")"
   info "Destination web        = $WEB_REMOTE_PATH"
   info "Mode auth SSH          = $SSH_AUTH_MODE"
+  info "Exclusions rsync web   = $WEB_RSYNC_EXCLUDES"
 
-  rsync_copy_dir "$source_path" "$WEB_REMOTE_PATH" "$WEB_REMOTE_DELETE" "$EXIT_DEPLOY_WEB"
+  rsync_copy_dir "$source_path" "$WEB_REMOTE_PATH" "$WEB_REMOTE_DELETE" "$EXIT_DEPLOY_WEB" "$WEB_RSYNC_EXCLUDES"
 }
 
 deploy_scripts_data() {
