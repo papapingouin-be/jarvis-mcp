@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 ########################################
 # jarvis_sync_build_redeploy.sh
-# Repo script version: 1.3.1
+# Repo script version: 1.3.2
 # Role: canonical implementation used by registry/config-web/runtime
 # Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
 #
@@ -516,7 +516,7 @@ self_doc_json() {
     "script_name":"%s",
     "file_name":"%s",
     "description":"%s",
-    "version":"1.3.1",
+    "version":"1.3.2",
     "supports_registry":true,
     "required_env":[
       {"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},
@@ -549,7 +549,7 @@ self_doc_json() {
 registry_doc_json() {
   local file_name
   file_name="$(basename "${BASH_SOURCE[0]}")"
-  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.3.1","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
+  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.3.2","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.")" \
@@ -875,8 +875,8 @@ EOF
 }
 
 on_error() {
-  local line_no="${1:-unknown}"
   local exit_code=$?
+  local line_no="${1:-unknown}"
   step_fail "Erreur bash à la ligne $line_no (code=$exit_code)"
   finalize_summary "$exit_code"
   echo
@@ -1010,7 +1010,8 @@ print_git_remotes_masked() {
   while IFS= read -r remote_name; do
     [[ -n "$remote_name" ]] || continue
     local remote_url
-    remote_url="$(git remote get-url "$remote_name" | mask_url)"
+    remote_url="$(git remote get-url "$remote_name" 2>/dev/null | mask_url || true)"
+    [[ -n "$remote_url" ]] || remote_url="<url indisponible>"
     info "  - $remote_name => $remote_url"
   done < <(git remote)
 }
