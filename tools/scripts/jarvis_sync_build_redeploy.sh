@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 ########################################
 # jarvis_sync_build_redeploy.sh
-# Repo script version: 1.2.0
+# Repo script version: 1.3.0
 # Role: canonical implementation used by registry/config-web/runtime
 # Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
 #
@@ -225,7 +225,7 @@ service_optional_params() {
 service_required_env() {
   case "$1" in
     all)
-      printf '%s\n' JARVIS_LOCAL_REPO JARVIS_MIRROR_SCRIPT JARVIS_TOOLS_WEBHOOK_URL JARVIS_srv_SSH JARVIS_srv_USER
+      printf '%s\n' JARVIS_LOCAL_REPO JARVIS_TOOLS_WEBHOOK_URL JARVIS_srv_SSH JARVIS_srv_USER
       ;;
     sync|install|build)
       printf '%s\n' JARVIS_LOCAL_REPO
@@ -234,7 +234,6 @@ service_required_env() {
       printf '%s\n' JARVIS_LOCAL_REPO JARVIS_srv_SSH JARVIS_srv_USER
       ;;
     mirror)
-      printf '%s\n' JARVIS_MIRROR_SCRIPT
       ;;
     webhook|restart)
       printf '%s\n' JARVIS_TOOLS_WEBHOOK_URL
@@ -517,13 +516,12 @@ self_doc_json() {
     "script_name":"%s",
     "file_name":"%s",
     "description":"%s",
-    "version":"1.2.0",
+    "version":"1.3.0",
     "supports_registry":true,
     "required_env":[
       {"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},
       {"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},
       {"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},
-      {"name":"JARVIS_MIRROR_SCRIPT","required":false,"secret":false,"description":"Mirror helper script path."},
       {"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},
       {"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},
       {"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},
@@ -549,7 +547,7 @@ self_doc_json() {
 registry_doc_json() {
   local file_name
   file_name="$(basename "${BASH_SOURCE[0]}")"
-  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.2.0","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_MIRROR_SCRIPT","required":false,"secret":false,"description":"Mirror helper script path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
+  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.3.0","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.")" \
@@ -787,6 +785,31 @@ configure_runtime_output_paths() {
   else
     SUMMARY_JSON=""
   fi
+}
+
+run_internal_git_mirror() {
+  local mirror_dir
+  mirror_dir="$(mktemp -d)"
+
+  cleanup_internal_git_mirror() {
+    rm -rf "$mirror_dir" >/dev/null 2>&1 || true
+  }
+
+  trap cleanup_internal_git_mirror RETURN
+
+  run_sensitive \
+    "git clone --mirror $(printf '%s\n' "$GITHUB_REPO_URL" | mask_url) ${mirror_dir}/repo.git" \
+    git clone --mirror "$GITHUB_REPO_URL" "${mirror_dir}/repo.git"
+
+  run git -C "${mirror_dir}/repo.git" fetch --prune origin
+
+  run_sensitive \
+    "git -C ${mirror_dir}/repo.git push --prune $(printf '%s\n' "$GITEA_REPO_URL" | mask_url) +refs/heads/*:refs/heads/*" \
+    git -C "${mirror_dir}/repo.git" push --prune "$GITEA_REPO_URL" +refs/heads/*:refs/heads/*
+
+  run_sensitive \
+    "git -C ${mirror_dir}/repo.git push --prune $(printf '%s\n' "$GITEA_REPO_URL" | mask_url) +refs/tags/*:refs/tags/*" \
+    git -C "${mirror_dir}/repo.git" push --prune "$GITEA_REPO_URL" +refs/tags/*:refs/tags/*
 }
 
 ########################################
@@ -1241,7 +1264,6 @@ run_npm_install_phase() {
 step_start "prechecks"
 
 require_env_for_selected_phases JARVIS_LOCAL_REPO "${JARVIS_LOCAL_REPO:-}" all sync install build deploy-web deploy-scripts
-require_env_for_selected_phases JARVIS_MIRROR_SCRIPT "${JARVIS_MIRROR_SCRIPT:-}" all mirror
 require_env_for_selected_phases jarvis_tools_GITHUB_TOKEN "${jarvis_tools_GITHUB_TOKEN:-}" all sync mirror
 require_env_for_selected_phases jarvis_tools_GITEA_TOKEN "${jarvis_tools_GITEA_TOKEN:-}" all mirror
 require_env_for_selected_phases JARVIS_TOOLS_WEBHOOK_URL "${JARVIS_TOOLS_WEBHOOK_URL:-}" all webhook
@@ -1268,8 +1290,8 @@ if phase_enabled "all" || phase_enabled "sync" || phase_enabled "install" || pha
   [[ -d "${JARVIS_LOCAL_REPO}/.git" ]] || die "Repo local introuvable: ${JARVIS_LOCAL_REPO}/.git" "$EXIT_ENV"
 fi
 
-if phase_enabled "all" || phase_enabled "mirror"; then
-  [[ -x "${JARVIS_MIRROR_SCRIPT}" ]] || die "Script mirror introuvable ou non exécutable: ${JARVIS_MIRROR_SCRIPT}" "$EXIT_ENV"
+if false; then
+  :
 fi
 
 if phase_enabled "all" || phase_enabled "deploy-web" || phase_enabled "deploy-scripts"; then
@@ -1425,16 +1447,10 @@ fi
 if phase_enabled "mirror"; then
   step_start "mirror"
 
-  export GITEA_TOKEN="${jarvis_tools_GITEA_TOKEN}"
-  export GITHUB_TOKEN="${jarvis_tools_GITHUB_TOKEN}"
-  export DST_URL="$GITEA_REPO_URL"
-  export SRC_URL="$GITHUB_REPO_URL"
-  export MODE="refs"
+  info "SRC_URL = $(printf '%s\n' "$GITHUB_REPO_URL" | mask_url)"
+  info "DST_URL = $(printf '%s\n' "$GITEA_REPO_URL" | mask_url)"
 
-  info "SRC_URL = $(printf '%s\n' "$SRC_URL" | mask_url)"
-  info "DST_URL = $(printf '%s\n' "$DST_URL" | mask_url)"
-
-  run "$JARVIS_MIRROR_SCRIPT"
+  run_internal_git_mirror
   step_ok "Mirror GitHub -> Gitea OK"
 fi
 

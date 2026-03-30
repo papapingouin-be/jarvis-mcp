@@ -50,7 +50,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "jarvis_sync_build_redeploy.sh": {
     name: "jarvis_sync_build_redeploy.sh",
     file_name: "jarvis_sync_build_redeploy.sh",
-    version: "1.0.0",
+    version: "1.3.0",
     required_env: [
       {
         name: "jarvis_tools_GITHUB_TOKEN",
@@ -69,12 +69,6 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
         required: false,
         secret: false,
         description: "Local repository path used by install, build and deploy phases.",
-      },
-      {
-        name: "JARVIS_MIRROR_SCRIPT",
-        required: false,
-        secret: false,
-        description: "Mirror helper script path for mirror phase.",
       },
       {
         name: "JARVIS_TOOLS_WEBHOOK_URL",
