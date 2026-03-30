@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 ########################################
 # jarvis_sync_build_redeploy.sh
-# Repo script version: 1.3.2
+# Repo script version: 1.3.3
 # Role: canonical implementation used by registry/config-web/runtime
 # Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
 #
@@ -516,7 +516,7 @@ self_doc_json() {
     "script_name":"%s",
     "file_name":"%s",
     "description":"%s",
-    "version":"1.3.2",
+    "version":"1.3.3",
     "supports_registry":true,
     "required_env":[
       {"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},
@@ -549,7 +549,7 @@ self_doc_json() {
 registry_doc_json() {
   local file_name
   file_name="$(basename "${BASH_SOURCE[0]}")"
-  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.3.2","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
+  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.3.3","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.")" \
@@ -1010,10 +1010,10 @@ print_git_remotes_masked() {
   while IFS= read -r remote_name; do
     [[ -n "$remote_name" ]] || continue
     local remote_url
-    remote_url="$(git remote get-url "$remote_name" 2>/dev/null | mask_url || true)"
+    remote_url="$(git -c safe.directory="${JARVIS_LOCAL_REPO:-$PWD}" remote get-url "$remote_name" 2>/dev/null | mask_url || true)"
     [[ -n "$remote_url" ]] || remote_url="<url indisponible>"
     info "  - $remote_name => $remote_url"
-  done < <(git remote)
+  done < <(git -c safe.directory="${JARVIS_LOCAL_REPO:-$PWD}" remote 2>/dev/null || true)
 }
 
 detect_ssh_auth_mode() {
@@ -1342,54 +1342,54 @@ if phase_enabled "sync"; then
   step_start "sync"
   cd "$JARVIS_LOCAL_REPO"
 
-  run git status --short || true
+  run git -c safe.directory="$JARVIS_LOCAL_REPO" status --short || true
   print_git_remotes_masked
 
-  if git remote get-url "$GITHUB_REMOTE_NAME" >/dev/null 2>&1; then
+  if git -c safe.directory="$JARVIS_LOCAL_REPO" remote get-url "$GITHUB_REMOTE_NAME" >/dev/null 2>&1; then
     run_sensitive \
       "git remote set-url $GITHUB_REMOTE_NAME $(printf '%s\n' "$GITHUB_REPO_URL" | mask_url)" \
-      git remote set-url "$GITHUB_REMOTE_NAME" "$GITHUB_REPO_URL"
+      git -c safe.directory="$JARVIS_LOCAL_REPO" remote set-url "$GITHUB_REMOTE_NAME" "$GITHUB_REPO_URL"
   else
     run_sensitive \
       "git remote add $GITHUB_REMOTE_NAME $(printf '%s\n' "$GITHUB_REPO_URL" | mask_url)" \
-      git remote add "$GITHUB_REMOTE_NAME" "$GITHUB_REPO_URL"
+      git -c safe.directory="$JARVIS_LOCAL_REPO" remote add "$GITHUB_REMOTE_NAME" "$GITHUB_REPO_URL"
   fi
 
   info "Remote GitHub utilisé : $GITHUB_REMOTE_NAME"
-  info "URL GitHub effective  : $(git remote get-url "$GITHUB_REMOTE_NAME" | mask_url)"
+  info "URL GitHub effective  : $(git -c safe.directory="$JARVIS_LOCAL_REPO" remote get-url "$GITHUB_REMOTE_NAME" | mask_url)"
 
-  LOCAL_COMMIT_BEFORE="$(git rev-parse HEAD)"
+  LOCAL_COMMIT_BEFORE="$(git -c safe.directory="$JARVIS_LOCAL_REPO" rev-parse HEAD)"
   info "Commit local avant sync : $LOCAL_COMMIT_BEFORE"
 
-  run git fetch --prune --prune-tags "$GITHUB_REMOTE_NAME" "+refs/heads/*:refs/remotes/$GITHUB_REMOTE_NAME/*" --tags
+  run git -c safe.directory="$JARVIS_LOCAL_REPO" fetch --prune --prune-tags "$GITHUB_REMOTE_NAME" "+refs/heads/*:refs/remotes/$GITHUB_REMOTE_NAME/*" --tags
 
-  git rev-parse --verify "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH" >/dev/null 2>&1 \
+  git -c safe.directory="$JARVIS_LOCAL_REPO" rev-parse --verify "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH" >/dev/null 2>&1 \
     || die "Branche distante introuvable: $GITHUB_REMOTE_NAME/$JARVIS_BRANCH" "$EXIT_GIT"
 
-  REMOTE_COMMIT="$(git rev-parse "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH")"
+  REMOTE_COMMIT="$(git -c safe.directory="$JARVIS_LOCAL_REPO" rev-parse "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH")"
   info "Commit GitHub visé       : $REMOTE_COMMIT"
 
-  run git checkout -B "$JARVIS_BRANCH" "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH"
-  run git reset --hard "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH"
-  run git clean -fd
+  run git -c safe.directory="$JARVIS_LOCAL_REPO" checkout -B "$JARVIS_BRANCH" "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH"
+  run git -c safe.directory="$JARVIS_LOCAL_REPO" reset --hard "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH"
+  run git -c safe.directory="$JARVIS_LOCAL_REPO" clean -fd
 
   if [[ -f .gitmodules ]]; then
-    run git submodule sync --recursive
-    run git submodule update --init --recursive
+    run git -c safe.directory="$JARVIS_LOCAL_REPO" submodule sync --recursive
+    run git -c safe.directory="$JARVIS_LOCAL_REPO" submodule update --init --recursive
   else
     info "Aucun .gitmodules détecté"
   fi
 
   if git lfs version >/dev/null 2>&1; then
-    run git lfs pull
+    run git -c safe.directory="$JARVIS_LOCAL_REPO" lfs pull
   else
     info "Git LFS non détecté"
   fi
 
-  LOCAL_COMMIT_AFTER="$(git rev-parse HEAD)"
+  LOCAL_COMMIT_AFTER="$(git -c safe.directory="$JARVIS_LOCAL_REPO" rev-parse HEAD)"
   info "Commit local après sync : $LOCAL_COMMIT_AFTER"
 
-  run git --no-pager log --oneline -n 3
+  run git -c safe.directory="$JARVIS_LOCAL_REPO" --no-pager log --oneline -n 3
   step_ok "Synchronisation GitHub -> local OK"
 fi
 
