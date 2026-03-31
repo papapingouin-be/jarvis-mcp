@@ -25,21 +25,6 @@ export const SERVER_NAME = "mcp-server-starter";
 export const SERVER_VERSION = "1.0.3";
 
 const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
-  "proxmox-CTDEV.sh": {
-    name: "proxmox-CTDEV.sh",
-    file_name: "proxmox-CTDEV.sh",
-    version: "1.0.0",
-    required_env: [
-      "PROXMOX_HOST",
-      "PROXMOX_WEB",
-      "PROXMOX_SSH_PORT",
-      "PROXMOX_USER",
-      "PROXMOX_PASSWORD",
-      "PROXMOX_API_TOKEN_ID",
-      "PROXMOX_API_TOKEN_SECRET",
-    ],
-    description: "Collecte les templates/CT Proxmox puis cree et demarre un conteneur CT de developpement.",
-  },
   "proxmox-diagnose.sh": {
     name: "proxmox-diagnose.sh",
     file_name: "proxmox-diagnose.sh",
@@ -113,8 +98,6 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
 
 const DEFAULT_SCRIPT_RUNNER_SENSITIVE_ENV_NAMES = [
   "PROXMOX_PASSWORD",
-  "PROXMOX_API_TOKEN_SECRET",
-  "PROXMOX_API_TOKEN_ID",
   "NPM_SECRET",
   "jarvis_tools_GITHUB_TOKEN",
   "jarvis_tools_GITEA_TOKEN",

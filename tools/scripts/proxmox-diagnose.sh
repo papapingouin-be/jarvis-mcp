@@ -100,6 +100,19 @@ append_bool_flag() {
   fi
 }
 
+param_or_default() {
+  local key="$1"
+  local fallback="${2:-}"
+  local value="${PARAMS[$key]:-}"
+
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return
+  fi
+
+  printf '%s' "$fallback"
+}
+
 is_metadata_mode() {
   local mode="$1"
   case "$mode" in
@@ -494,13 +507,14 @@ validate_mode_for_phase() {
 
 build_core_args() {
   local mode="$1"
-  local host user port password identity_file output
+  local host user port password identity_file output sudo_enabled
   host="$(param_or_env "host" "PROXMOX_HOST")"
   user="$(param_or_env "user" "PROXMOX_USER")"
   port="$(param_or_env "port" "PROXMOX_SSH_PORT" "22")"
   password="$(param_or_env "password" "PROXMOX_PASSWORD")"
   identity_file="$(param_or_env "identity_file" "PROXMOX_IDENTITY_FILE")"
   output="${PARAMS[output]:-json}"
+  sudo_enabled="$(param_or_default "sudo" "true")"
 
   [[ -n "$host" ]] || emit_error "Missing target host" "Provide params.host or PROXMOX_HOST"
   [[ -n "$user" ]] || emit_error "Missing target user" "Provide params.user or PROXMOX_USER"
@@ -516,7 +530,7 @@ build_core_args() {
   append_arg_if_value args "--password" "$password"
   append_arg_if_value args "--identity-file" "$identity_file"
 
-  append_bool_flag args "--sudo" "${PARAMS[sudo]:-false}"
+  append_bool_flag args "--sudo" "$sudo_enabled"
   append_bool_flag args "--verbose" "${PARAMS[verbose]:-false}"
   append_bool_flag args "--trace" "${PARAMS[trace]:-false}"
   append_bool_flag args "--install-ssh" "${PARAMS[install_ssh]:-false}"

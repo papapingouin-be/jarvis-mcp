@@ -177,7 +177,7 @@ const jarvisAutotestDbModule: RegisterableModule = {
           checks.script_registry_read_ok = true;
 
           failedStep = "script_env_read";
-          const storedScriptEnv = await scriptEnvRepository.listByScript("proxmox-CTDEV.sh");
+          const storedScriptEnv = await scriptEnvRepository.listByScript("proxmox-diagnose.sh");
           checks.script_env_read_ok = true;
 
           return toSuccessPayload({

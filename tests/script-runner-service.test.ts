@@ -27,7 +27,7 @@ describe("script runner service", () => {
 
     await assert.rejects(
       async () => service.run({
-        script_name: "proxmox-CTDEV.sh",
+        script_name: "proxmox-diagnose.sh",
         phase: "execute",
       }),
       (error: unknown) => error instanceof ScriptRunnerError && error.code === "CONFIRMATION_REQUIRED"

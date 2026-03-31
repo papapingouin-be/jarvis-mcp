@@ -5,7 +5,7 @@ import { jarvisRunScriptInputSchema } from "../src/modules/script_runner/types/s
 describe("jarvis_run_script input schema", () => {
   it("accepts collect payload", () => {
     const result = jarvisRunScriptInputSchema.safeParse({
-      script_name: "proxmox-CTDEV.sh",
+      script_name: "proxmox-diagnose.sh",
       phase: "collect",
     });
 
@@ -14,7 +14,7 @@ describe("jarvis_run_script input schema", () => {
 
   it("accepts verbose flag", () => {
     const result = jarvisRunScriptInputSchema.safeParse({
-      script_name: "proxmox-CTDEV.sh",
+      script_name: "proxmox-diagnose.sh",
       phase: "collect",
       verbose: true,
     });
@@ -24,7 +24,7 @@ describe("jarvis_run_script input schema", () => {
 
   it("rejects invalid phase", () => {
     const result = jarvisRunScriptInputSchema.safeParse({
-      script_name: "proxmox-CTDEV.sh",
+      script_name: "proxmox-diagnose.sh",
       phase: "dryrun",
     });
 
