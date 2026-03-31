@@ -1521,7 +1521,30 @@ function run_script_command(string $command, array $scriptEnv): string
 
 function jarvis_script_jobs_root(): string
 {
-    return jarvis_data_path('script-jobs');
+    $candidates = [
+        env_value('JARVIS_SCRIPT_JOBS_DIR'),
+        jarvis_data_path('tmp/script-jobs'),
+        jarvis_data_path('logs/script-jobs'),
+        rtrim(sys_get_temp_dir(), '/\\') . '/jarvis-script-jobs',
+    ];
+
+    foreach ($candidates as $candidate) {
+        $path = trim((string) $candidate);
+        if ($path === '') {
+            continue;
+        }
+
+        if (is_dir($path)) {
+            return $path;
+        }
+
+        $parent = dirname($path);
+        if (is_dir($parent) && is_writable($parent)) {
+            return $path;
+        }
+    }
+
+    return rtrim(sys_get_temp_dir(), '/\\') . '/jarvis-script-jobs';
 }
 
 function jarvis_ensure_dir(string $path): void
