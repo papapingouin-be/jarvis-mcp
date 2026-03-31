@@ -90,12 +90,27 @@ append_arg_if_value() {
   fi
 }
 
+is_truthy() {
+  local value="${1:-}"
+  local normalized
+  normalized="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+
+  case "$normalized" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 append_bool_flag() {
   local -n target_ref="$1"
   local flag="$2"
   local value="${3:-false}"
 
-  if [[ "$value" == "true" ]]; then
+  if is_truthy "$value"; then
     target_ref+=("$flag")
   fi
 }
@@ -335,7 +350,7 @@ registry_doc_json() {
     "$(json_escape "$file_name")" \
     "$(json_escape "$file_name")" \
     "$(json_escape "Diagnostic and orchestration wrapper for Proxmox over SSH.")" \
-    "1.0.2" \
+    "1.0.3" \
     "$(registry_required_env_json)" \
     "$(metadata_services_json)"
 }
