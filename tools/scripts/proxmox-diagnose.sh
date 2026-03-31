@@ -335,7 +335,7 @@ registry_doc_json() {
     "$(json_escape "$file_name")" \
     "$(json_escape "$file_name")" \
     "$(json_escape "Diagnostic and orchestration wrapper for Proxmox over SSH.")" \
-    "1.0.1" \
+    "1.0.2" \
     "$(registry_required_env_json)" \
     "$(metadata_services_json)"
 }
@@ -390,6 +390,11 @@ validate_service_input_json() {
   SERVICE_DEFAULTS_JSON="$defaults_json" \
   SERVICE_EXAMPLE_JSON="$example_json" \
   PARAMS_JSON="$(params_json_for_validation)" \
+  PROXMOX_HOST_VALUE="${PROXMOX_HOST:-}" \
+  PROXMOX_USER_VALUE="${PROXMOX_USER:-}" \
+  PROXMOX_SSH_PORT_VALUE="${PROXMOX_SSH_PORT:-}" \
+  PROXMOX_PASSWORD_VALUE="${PROXMOX_PASSWORD:-}" \
+  PROXMOX_IDENTITY_FILE_VALUE="${PROXMOX_IDENTITY_FILE:-}" \
   python3 - <<'PY'
 import json
 import os
@@ -406,6 +411,19 @@ params = json.loads(os.environ["PARAMS_JSON"])
 
 ignored = {"mode", "service", "output"}
 known = {k: v for k, v in params.items() if k not in ignored and v not in ("", None)}
+
+env_fallbacks = {
+    "host": os.environ.get("PROXMOX_HOST_VALUE", ""),
+    "user": os.environ.get("PROXMOX_USER_VALUE", ""),
+    "port": os.environ.get("PROXMOX_SSH_PORT_VALUE", ""),
+    "password": os.environ.get("PROXMOX_PASSWORD_VALUE", ""),
+    "identity_file": os.environ.get("PROXMOX_IDENTITY_FILE_VALUE", ""),
+}
+
+for key, value in env_fallbacks.items():
+    if key not in known and value not in ("", None):
+        known[key] = value
+
 missing_required = [key for key in required_params if key not in known]
 optional_missing = [key for key in optional_params if key not in known]
 
@@ -516,17 +534,19 @@ build_core_args() {
   output="${PARAMS[output]:-json}"
   sudo_enabled="$(param_or_default "sudo" "true")"
 
-  [[ -n "$host" ]] || emit_error "Missing target host" "Provide params.host or PROXMOX_HOST"
-  [[ -n "$user" ]] || emit_error "Missing target user" "Provide params.user or PROXMOX_USER"
+  if [[ "$mode" != "self-doc" ]]; then
+    [[ -n "$host" ]] || emit_error "Missing target host" "Provide params.host or PROXMOX_HOST"
+    [[ -n "$user" ]] || emit_error "Missing target user" "Provide params.user or PROXMOX_USER"
+  fi
 
   local -a args=(
-    "--host" "$host"
-    "--port" "$port"
-    "--user" "$user"
     "--mode" "$mode"
     "--output" "$output"
   )
 
+  append_arg_if_value args "--host" "$host"
+  append_arg_if_value args "--port" "$port"
+  append_arg_if_value args "--user" "$user"
   append_arg_if_value args "--password" "$password"
   append_arg_if_value args "--identity-file" "$identity_file"
 
@@ -579,7 +599,7 @@ main() {
   done < <(build_core_args "$mode")
 
   log "Delegating to core script in mode=$mode"
-  exec "$core_script" "${core_args[@]}"
+  exec bash "$core_script" "${core_args[@]}"
 }
 
 main "$@"
