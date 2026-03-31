@@ -1519,6 +1519,152 @@ function run_script_command(string $command, array $scriptEnv): string
     return (string) $result['stdout'];
 }
 
+function jarvis_script_jobs_root(): string
+{
+    return jarvis_data_path('script-jobs');
+}
+
+function jarvis_ensure_dir(string $path): void
+{
+    if (is_dir($path)) {
+        return;
+    }
+
+    if (!mkdir($path, 0775, true) && !is_dir($path)) {
+        throw new RuntimeException('Impossible de creer le dossier: ' . $path);
+    }
+}
+
+function jarvis_script_job_path(string $jobId, string $suffix = ''): string
+{
+    $base = jarvis_script_jobs_root() . '/' . $jobId;
+    return $suffix === '' ? $base : $base . '/' . ltrim($suffix, '/');
+}
+
+function jarvis_write_json_file(string $path, array $payload): void
+{
+    $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    if (!is_string($json) || file_put_contents($path, $json) === false) {
+        throw new RuntimeException('Impossible d ecrire le fichier JSON: ' . $path);
+    }
+}
+
+function jarvis_read_json_file(string $path): array
+{
+    if (!is_file($path)) {
+        return [];
+    }
+
+    $decoded = json_decode((string) file_get_contents($path), true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function jarvis_truncate_text(string $text, int $limit = 12000): string
+{
+    if (strlen($text) <= $limit) {
+        return $text;
+    }
+
+    return substr($text, 0, $limit) . "\n...[truncated]";
+}
+
+function jarvis_start_script_job(string $command, array $scriptEnv, array $meta = []): array
+{
+    jarvis_ensure_dir(jarvis_script_jobs_root());
+
+    $jobId = bin2hex(random_bytes(16));
+    $jobDir = jarvis_script_job_path($jobId);
+    jarvis_ensure_dir($jobDir);
+
+    $stdoutFile = jarvis_script_job_path($jobId, 'stdout.log');
+    $stderrFile = jarvis_script_job_path($jobId, 'stderr.log');
+    $exitFile = jarvis_script_job_path($jobId, 'exit_code.txt');
+    $metaFile = jarvis_script_job_path($jobId, 'meta.json');
+
+    $payload = array_merge([
+        'job_id' => $jobId,
+        'status' => 'running',
+        'created_at' => date('c'),
+        'command' => $command,
+        'pid' => null,
+    ], $meta);
+    jarvis_write_json_file($metaFile, $payload);
+
+    $runnerScript = "( {$command} ) > " . escapeshellarg($stdoutFile)
+        . " 2> " . escapeshellarg($stderrFile)
+        . "; printf '%s' \"\\$?\" > " . escapeshellarg($exitFile);
+    $shellCommand = "nohup bash -lc " . escapeshellarg($runnerScript) . " >/dev/null 2>&1 & echo $!";
+
+    $spec = [
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $process = proc_open($shellCommand, $spec, $pipes, null, array_merge(env_all(), $scriptEnv));
+
+    if (!is_resource($process)) {
+        throw new RuntimeException('Impossible de demarrer le job async.');
+    }
+
+    $pid = trim((string) stream_get_contents($pipes[1]));
+    fclose($pipes[1]);
+    $stderr = trim((string) stream_get_contents($pipes[2]));
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    if ($exitCode !== 0 || $pid === '') {
+        throw new RuntimeException('Impossible de lancer le job async.' . ($stderr !== '' ? "\n" . $stderr : ''));
+    }
+
+    $payload['pid'] = $pid;
+    jarvis_write_json_file($metaFile, $payload);
+
+    return [
+        'job_id' => $jobId,
+        'pid' => $pid,
+        'status' => 'running',
+    ];
+}
+
+function jarvis_get_script_job(string $jobId): array
+{
+    $jobDir = jarvis_script_job_path($jobId);
+    if (!is_dir($jobDir)) {
+        throw new RuntimeException('Job introuvable.');
+    }
+
+    $meta = jarvis_read_json_file(jarvis_script_job_path($jobId, 'meta.json'));
+    $stdout = is_file(jarvis_script_job_path($jobId, 'stdout.log'))
+        ? (string) file_get_contents(jarvis_script_job_path($jobId, 'stdout.log'))
+        : '';
+    $stderr = is_file(jarvis_script_job_path($jobId, 'stderr.log'))
+        ? (string) file_get_contents(jarvis_script_job_path($jobId, 'stderr.log'))
+        : '';
+    $exitFile = jarvis_script_job_path($jobId, 'exit_code.txt');
+
+    $status = 'running';
+    $exitCode = null;
+    if (is_file($exitFile)) {
+        $status = 'completed';
+        $exitCode = (int) trim((string) file_get_contents($exitFile));
+        if ($exitCode !== 0) {
+            $status = 'failed';
+        }
+    }
+
+    return [
+        'job_id' => $jobId,
+        'status' => $status,
+        'created_at' => (string) ($meta['created_at'] ?? ''),
+        'script_name' => (string) ($meta['script_name'] ?? ''),
+        'service_name' => (string) ($meta['service_name'] ?? ''),
+        'phase' => (string) ($meta['phase'] ?? ''),
+        'pid' => (string) ($meta['pid'] ?? ''),
+        'exit_code' => $exitCode,
+        'stdout' => jarvis_truncate_text(trim($stdout)),
+        'stderr' => jarvis_truncate_text(trim($stderr)),
+    ];
+}
+
 function services_default(): array
 {
     return [

@@ -573,15 +573,69 @@ function bindScriptsTestForm() {
     return;
   }
 
+  const renderScriptJobStatus = (job = {}) => {
+    const status = String(job.status || "unknown").toUpperCase();
+    const statusClass = status === "COMPLETED" ? "up" : status === "FAILED" ? "down" : "warn";
+    const stdout = escapeHtml(job.stdout || "");
+    const stderr = escapeHtml(job.stderr || "");
+    const exitCode = job.exit_code === null || job.exit_code === undefined ? "" : String(job.exit_code);
+
+    return `<div class="card">
+      <h3>Execution asynchrone</h3>
+      <p><strong>Job ID</strong> : <code>${escapeHtml(job.job_id || "")}</code></p>
+      <p><strong>Statut</strong> : <span class="status ${statusClass}">${status}</span></p>
+      <p><strong>Phase</strong> : <code>${escapeHtml(job.phase || "")}</code></p>
+      <p><strong>Service</strong> : <code>${escapeHtml(job.service_name || "")}</code></p>
+      <p><strong>Exit code</strong> : <code>${escapeHtml(exitCode)}</code></p>
+      <h4>stdout</h4>
+      <pre>${stdout || "(vide)"}</pre>
+      <h4>stderr</h4>
+      <pre>${stderr || "(vide)"}</pre>
+    </div>`;
+  };
+
+  const pollScriptJob = async (jobId, result) => {
+    let attempts = 0;
+
+    while (attempts < 240) {
+      attempts += 1;
+      const response = await fetch(`api/scripts_test.php?action=job_status&job_id=${encodeURIComponent(jobId)}`);
+      const payload = await response.json();
+
+      if (!payload.ok) {
+        result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur job_status"}</pre></div>`;
+        return;
+      }
+
+      result.innerHTML = renderScriptJobStatus(payload.job || {});
+
+      if ((payload.job?.status || "") !== "running") {
+        return;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+
+    result.innerHTML += '<div class="notice warning">Le suivi automatique a expire. Recharge la page pour verifier l etat final.</div>';
+  };
+
   testForm.onsubmit = async (event) => {
     event.preventDefault();
+    const result = document.getElementById("scripts-test-result");
+    setResultLoading(result, "Execution du test", "Preparation de la requete...");
     const body = new URLSearchParams(new FormData(testForm)).toString();
     const response = await fetch("api/scripts_test.php", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
-    document.getElementById("scripts-test-result").innerHTML = await response.text();
+    result.innerHTML = await response.text();
+
+    const jobNode = result.querySelector("[data-script-job-id]");
+    const jobId = jobNode?.getAttribute("data-script-job-id");
+    if (jobId) {
+      await pollScriptJob(jobId, result);
+    }
   };
 
   const exampleButton = document.getElementById("scripts-test-example-btn");

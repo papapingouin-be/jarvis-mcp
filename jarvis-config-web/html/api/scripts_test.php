@@ -183,6 +183,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') ===
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') === 'job_status') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    try {
+        $jobId = trim((string) ($_GET['job_id'] ?? ''));
+        if ($jobId === '') {
+            throw new RuntimeException('job_id obligatoire.');
+        }
+
+        echo json_encode([
+            'ok' => true,
+            'job' => jarvis_get_script_job($jobId),
+        ], JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(400);
+        echo json_encode([
+            'ok' => false,
+            'message' => $e->getMessage(),
+        ], JSON_UNESCAPED_SLASHES);
+    }
+
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         jarvis_check_csrf();
@@ -279,6 +303,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($executionMode !== 'execute') {
             throw new RuntimeException('Mode inconnu.');
+        }
+
+        if ($effectivePhase === 'execute') {
+            $job = jarvis_start_script_job($cmd, $pc['script_env'], [
+                'script_name' => $name,
+                'service_name' => $selectedService,
+                'phase' => $effectivePhase,
+            ]);
+            jarvis_append_log('scripts-test', $name, 'queued', 'job_id=' . ($job['job_id'] ?? ''));
+
+            echo '<div class="card" data-script-job-id="' . h((string) ($job['job_id'] ?? '')) . '">';
+            echo '<h3>Execution asynchrone lancee</h3>';
+            echo '<p><strong>Job ID</strong> : <code>' . h((string) ($job['job_id'] ?? '')) . '</code></p>';
+            echo '<p><strong>PID</strong> : <code>' . h((string) ($job['pid'] ?? '')) . '</code></p>';
+            echo '<p class="small">Le script tourne en arriere-plan pour eviter les timeouts HTTP. Le resultat se mettra a jour automatiquement.</p>';
+            echo '<div class="script-job-status"><p class="small">Statut : <span class="status warn">RUNNING</span></p><pre>Initialisation du suivi du job...</pre></div>';
+            echo '</div>';
+            exit;
         }
 
         $out = run_script_command($cmd, $pc['script_env']);
