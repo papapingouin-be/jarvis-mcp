@@ -335,7 +335,7 @@ registry_doc_json() {
     "$(json_escape "$file_name")" \
     "$(json_escape "$file_name")" \
     "$(json_escape "Diagnostic and orchestration wrapper for Proxmox over SSH.")" \
-    "1.0.0" \
+    "1.0.1" \
     "$(registry_required_env_json)" \
     "$(metadata_services_json)"
 }
