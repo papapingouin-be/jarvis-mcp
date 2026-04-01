@@ -142,10 +142,10 @@ is_metadata_mode() {
 
 service_phase() {
   case "$1" in
-    self-doc|diagnose|collect)
+    self-doc|diagnose|collect|list-guests)
       printf 'collect'
       ;;
-    preflight-create|create-ct|get-ct-info|stop-ct|destroy-ct|ensure-ct)
+    preflight-create|create-ct|get-ct-info|get-guest-status|exec-in-ct|stop-ct|destroy-ct|ensure-ct)
       printf 'execute'
       ;;
     *)
@@ -156,10 +156,10 @@ service_phase() {
 
 service_confirmed_required() {
   case "$1" in
-    self-doc|diagnose|collect)
+    self-doc|diagnose|collect|list-guests)
       printf 'false'
       ;;
-    preflight-create|create-ct|get-ct-info|stop-ct|destroy-ct|ensure-ct)
+    preflight-create|create-ct|get-ct-info|get-guest-status|exec-in-ct|stop-ct|destroy-ct|ensure-ct)
       printf 'true'
       ;;
     *)
@@ -173,9 +173,12 @@ service_description() {
     self-doc) printf 'Return machine-readable documentation for the script.' ;;
     diagnose) printf 'Test SSH, remote context, sudo, and Proxmox commands.' ;;
     collect) printf 'Collect templates, storages, bridges, CTs, VMs, and nextid.' ;;
+    list-guests) printf 'List CTs and VMs with their detected type, status, and name.' ;;
     preflight-create) printf 'Validate whether a future CT creation looks ready.' ;;
     create-ct) printf 'Create and start a CT container.' ;;
     get-ct-info) printf 'Read status, hostname, config, and IP of a CT.' ;;
+    get-guest-status) printf 'Read status and basic metadata of a CT or VM.' ;;
+    exec-in-ct) printf 'Execute a shell command inside an existing CT.' ;;
     stop-ct) printf 'Stop an existing CT.' ;;
     destroy-ct) printf 'Destroy an existing CT.' ;;
     ensure-ct) printf 'Ensure a CT exists and is running.' ;;
@@ -189,7 +192,7 @@ service_required_params() {
   case "$1" in
     self-doc)
       ;;
-    diagnose|collect)
+    diagnose|collect|list-guests)
       printf '%s\n' host user
       ;;
     preflight-create)
@@ -198,8 +201,11 @@ service_required_params() {
     create-ct|ensure-ct)
       printf '%s\n' host user password type template storage bridge vmid hostname
       ;;
-    get-ct-info|stop-ct|destroy-ct)
+    get-ct-info|get-guest-status|stop-ct|destroy-ct)
       printf '%s\n' host user vmid
+      ;;
+    exec-in-ct)
+      printf '%s\n' host user vmid command
       ;;
     *)
       return 1
@@ -211,7 +217,7 @@ service_optional_params() {
   case "$1" in
     self-doc)
       ;;
-    diagnose|collect)
+    diagnose|collect|list-guests)
       printf '%s\n' password port sudo verbose trace identity_file
       ;;
     preflight-create)
@@ -220,7 +226,10 @@ service_optional_params() {
     create-ct|ensure-ct)
       printf '%s\n' port sudo verbose trace identity_file cores memory swap disk install_ssh reconfigure
       ;;
-    get-ct-info|stop-ct|destroy-ct)
+    get-ct-info|get-guest-status|stop-ct|destroy-ct)
+      printf '%s\n' password port sudo verbose trace identity_file
+      ;;
+    exec-in-ct)
       printf '%s\n' password port sudo verbose trace identity_file
       ;;
     *)
@@ -231,7 +240,7 @@ service_optional_params() {
 
 service_defaults_json() {
   case "$1" in
-    diagnose|collect)
+    diagnose|collect|list-guests)
       printf '{"port":"22","sudo":true}'
       ;;
     preflight-create)
@@ -240,7 +249,7 @@ service_defaults_json() {
     create-ct|ensure-ct)
       printf '{"port":"22","sudo":true,"type":"ct","cores":"2","memory":"2048","swap":"512","disk":"8","install_ssh":true}'
       ;;
-    get-ct-info|stop-ct|destroy-ct)
+    get-ct-info|get-guest-status|stop-ct|destroy-ct|exec-in-ct)
       printf '{"port":"22","sudo":true}'
       ;;
     self-doc)
@@ -263,6 +272,9 @@ service_example_params_json() {
     collect)
       printf '{"mode":"collect","host":"192.168.11.248","user":"root","password":"change-me","sudo":true}'
       ;;
+    list-guests)
+      printf '{"mode":"list-guests","host":"192.168.11.248","user":"root","password":"change-me","sudo":true}'
+      ;;
     preflight-create)
       printf '{"mode":"preflight-create","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"type":"ct","template":"debian-12-standard_12.7-1_amd64.tar.zst","storage":"local-lvm","bridge":"vmbr0","vmid":"9100","hostname":"ctdev","cores":"2","memory":"2048","disk":"8","install_ssh":true}'
       ;;
@@ -271,6 +283,12 @@ service_example_params_json() {
       ;;
     get-ct-info)
       printf '{"mode":"get-ct-info","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"vmid":"9100"}'
+      ;;
+    get-guest-status)
+      printf '{"mode":"get-guest-status","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"vmid":"9100"}'
+      ;;
+    exec-in-ct)
+      printf '{"mode":"exec-in-ct","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"vmid":"9100","command":"uname -a"}'
       ;;
     stop-ct)
       printf '{"mode":"stop-ct","host":"192.168.11.248","user":"root","password":"change-me","sudo":true,"vmid":"9100"}'
@@ -309,9 +327,12 @@ metadata_services_json() {
   local services="self-doc
 diagnose
 collect
+list-guests
 preflight-create
 create-ct
 get-ct-info
+get-guest-status
+exec-in-ct
 stop-ct
 destroy-ct
 ensure-ct"
@@ -346,11 +367,11 @@ registry_doc_json() {
   local file_name
   file_name="$(basename "${BASH_SOURCE[0]}")"
 
-  printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"%s","required_env":%s,"supports_registry":true,"services":%s,"capabilities":["diagnose","collect","preflight-create","create-ct","get-ct-info","stop-ct","destroy-ct","ensure-ct","metadata"],"tags":["proxmox","ssh","container","vm","jarvis"]}}\n' \
+  printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"%s","required_env":%s,"supports_registry":true,"services":%s,"capabilities":["diagnose","collect","list-guests","preflight-create","create-ct","get-ct-info","get-guest-status","exec-in-ct","stop-ct","destroy-ct","ensure-ct","metadata"],"tags":["proxmox","ssh","container","vm","jarvis"]}}\n' \
     "$(json_escape "$file_name")" \
     "$(json_escape "$file_name")" \
     "$(json_escape "Diagnostic and orchestration wrapper for Proxmox over SSH.")" \
-    "1.0.3" \
+    "1.0.4" \
     "$(registry_required_env_json)" \
     "$(metadata_services_json)"
 }
@@ -526,10 +547,10 @@ validate_mode_for_phase() {
   local mode="$1"
 
   case "$PHASE:$mode" in
-    collect:registry-doc|collect:list-services|collect:describe-service|collect:validate-service-input|collect:self-doc|collect:diagnose|collect:collect|collect:preflight-create)
+    collect:registry-doc|collect:list-services|collect:describe-service|collect:validate-service-input|collect:self-doc|collect:diagnose|collect:collect|collect:list-guests|collect:preflight-create)
       return 0
       ;;
-    execute:diagnose|execute:collect|execute:preflight-create|execute:create-ct|execute:get-ct-info|execute:stop-ct|execute:destroy-ct|execute:ensure-ct)
+    execute:diagnose|execute:collect|execute:preflight-create|execute:create-ct|execute:get-ct-info|execute:get-guest-status|execute:exec-in-ct|execute:stop-ct|execute:destroy-ct|execute:ensure-ct)
       return 0
       ;;
     *)
@@ -582,6 +603,7 @@ build_core_args() {
   append_arg_if_value args "--memory" "${PARAMS[memory]:-}"
   append_arg_if_value args "--swap" "${PARAMS[swap]:-}"
   append_arg_if_value args "--disk" "${PARAMS[disk]:-}"
+  append_arg_if_value args "--command" "${PARAMS[command]:-}"
 
   printf '%s\0' "${args[@]}"
 }

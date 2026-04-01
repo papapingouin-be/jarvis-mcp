@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #===============================================================================
-# proxmox-diagnose.sh - V6.2
+# proxmox-diagnose.sh - V6.3
 #
 # Mini orchestrateur Proxmox VE via SSH + sudo, orienté CT LXC.
 #
@@ -8,9 +8,12 @@
 #   - self-doc          : retourne uniquement la documentation machine-readable
 #   - diagnose          : vérifie SSH, sudo, présence des commandes Proxmox
 #   - collect           : collecte templates, storages, bridges, CT/VM existants
+#   - list-guests       : liste les CT/VM avec type, nom, statut
 #   - preflight-create  : vérifie qu'une création future est faisable
 #   - create-ct         : crée un CT, le démarre, post-install réseau, SSH
 #   - get-ct-info       : remonte état, nom, config, IP d'un CT
+#   - get-guest-status  : remonte état et métadonnées de base d'un CT ou d'une VM
+#   - exec-in-ct        : exécute une commande shell dans un CT existant
 #   - stop-ct           : arrête un CT
 #   - destroy-ct        : détruit un CT
 #   - ensure-ct         : garantit qu'un CT existe et tourne
@@ -28,16 +31,19 @@ set -Eeuo pipefail
 #------------------------------------------------------------------------------
 # Meta
 #------------------------------------------------------------------------------
-SCRIPT_VERSION="6.2"
+SCRIPT_VERSION="6.3"
 SCRIPT_NAME="proxmox-diagnose.sh"
 
 SUPPORTED_MODES=(
   "self-doc"
   "diagnose"
   "collect"
+  "list-guests"
   "preflight-create"
   "create-ct"
   "get-ct-info"
+  "get-guest-status"
+  "exec-in-ct"
   "stop-ct"
   "destroy-ct"
   "ensure-ct"
@@ -65,6 +71,7 @@ REQUEST_STORAGE=""
 REQUEST_BRIDGE=""
 REQUEST_VMID=""
 REQUEST_HOSTNAME=""
+REQUEST_COMMAND=""
 
 #------------------------------------------------------------------------------
 # Paramètres CT par défaut
@@ -162,6 +169,7 @@ INSTALL_SSH_OUTPUT=""
 #------------------------------------------------------------------------------
 INFO_OK=false
 INFO_EXISTS=false
+INFO_TYPE=""
 INFO_STATUS=""
 INFO_IP=""
 INFO_NAME=""
@@ -169,6 +177,22 @@ INFO_CONFIG=""
 INFO_RC=""
 INFO_OUTPUT=""
 INFO_WARNINGS=()
+
+#------------------------------------------------------------------------------
+# État list-guests
+#------------------------------------------------------------------------------
+GUEST_ITEMS=()
+
+#------------------------------------------------------------------------------
+# État exec-in-ct
+#------------------------------------------------------------------------------
+EXEC_OK=false
+EXEC_EXISTS=false
+EXEC_STATUS=""
+EXEC_RC=""
+EXEC_STDOUT=""
+EXEC_STDERR=""
+EXEC_WARNINGS=()
 
 #------------------------------------------------------------------------------
 # État stop
@@ -376,9 +400,12 @@ Modes:
   self-doc
   diagnose
   collect
+  list-guests
   preflight-create
   create-ct
   get-ct-info
+  get-guest-status
+  exec-in-ct
   stop-ct
   destroy-ct
   ensure-ct
@@ -402,6 +429,7 @@ Object options:
   --bridge NAME
   --vmid ID
   --hostname NAME
+  --command COMMAND
 
 CT tuning:
   --cores N
@@ -489,9 +517,12 @@ emit_docs_json() {
   printf '"self-doc":"%s",' "$(printf '%s' 'Return only machine-readable documentation without SSH or Proxmox checks.' | json_escape)"
   printf '"diagnose":"%s",' "$(printf '%s' 'Check SSH, sudo, Proxmox commands, and remote context.' | json_escape)"
   printf '"collect":"%s",' "$(printf '%s' 'Collect templates, local templates, storages, bridges, existing CTs and VMs, and nextid when available.' | json_escape)"
+  printf '"list-guests":"%s",' "$(printf '%s' 'List CTs and VMs with detected type, status, and display name when available.' | json_escape)"
   printf '"preflight-create":"%s",' "$(printf '%s' 'Validate whether a future CT or VM creation request looks ready without creating anything.' | json_escape)"
   printf '"create-ct":"%s",' "$(printf '%s' 'Create a CT, start it, optionally configure networking, install OpenSSH, and return detected IPv4.' | json_escape)"
   printf '"get-ct-info":"%s",' "$(printf '%s' 'Read CT status, hostname, config, and detected IPv4.' | json_escape)"
+  printf '"get-guest-status":"%s",' "$(printf '%s' 'Read status and basic metadata of a CT or VM.' | json_escape)"
+  printf '"exec-in-ct":"%s",' "$(printf '%s' 'Execute a shell command inside a running or existing CT.' | json_escape)"
   printf '"stop-ct":"%s",' "$(printf '%s' 'Stop an existing CT.' | json_escape)"
   printf '"destroy-ct":"%s",' "$(printf '%s' 'Stop if needed and destroy an existing CT.' | json_escape)"
   printf '"ensure-ct":"%s"' "$(printf '%s' 'Ensure a CT exists and is running; with --reconfigure it also reruns post-install and SSH setup.' | json_escape)"
@@ -511,6 +542,7 @@ emit_docs_json() {
   printf '"parameters":{'
   printf '"core":'; json_array_strings "--host" "--port" "--user" "--password" "--identity-file" "--mode" "--output" "--sudo" "--verbose" "--trace"; printf ','
   printf '"object":'; json_array_strings "--type" "--template" "--storage" "--bridge" "--vmid" "--hostname"; printf ','
+  printf '"guest_exec":'; json_array_strings "--command"; printf ','
   printf '"ct_tuning":'; json_array_strings "--cores" "--memory" "--swap" "--disk" "--install-ssh" "--no-install-ssh"; printf ','
   printf '"ensure":'; json_array_strings "--reconfigure"
   printf '},'
@@ -518,6 +550,7 @@ emit_docs_json() {
   printf '"notes":'
   json_array_strings \
     "create-ct and ensure-ct currently support only --type ct." \
+    "exec-in-ct currently supports CTs only, not VMs." \
     "ensure-ct is passive by default: create if absent, start if stopped, then report state and IP." \
     "ensure-ct with --reconfigure reruns CT post-install networking and SSH installation." \
     "The CT root password is set from --password during create-ct." \
@@ -537,6 +570,7 @@ add_info_warning() { INFO_WARNINGS+=("$1"); }
 add_stop_warning() { STOP_WARNINGS+=("$1"); }
 add_destroy_warning() { DESTROY_WARNINGS+=("$1"); }
 add_ensure_warning() { ENSURE_WARNINGS+=("$1"); }
+add_exec_warning() { EXEC_WARNINGS+=("$1"); }
 
 safe_assoc_get() {
   local map_name="$1"
@@ -571,6 +605,19 @@ vmid_exists() {
   local candidate="$1"
   in_array_exact "$candidate" "${EXISTING_CT[@]}" && return 0
   in_array_exact "$candidate" "${EXISTING_VM[@]}" && return 0
+  return 1
+}
+
+guest_type_by_vmid() {
+  local candidate="$1"
+  if in_array_exact "$candidate" "${EXISTING_CT[@]}"; then
+    printf 'ct'
+    return 0
+  fi
+  if in_array_exact "$candidate" "${EXISTING_VM[@]}"; then
+    printf 'vm'
+    return 0
+  fi
   return 1
 }
 
@@ -648,6 +695,16 @@ reset_create_state() {
   INSTALL_SSH_OUTPUT=""
 }
 
+reset_exec_state() {
+  EXEC_OK=false
+  EXEC_EXISTS=false
+  EXEC_STATUS=""
+  EXEC_RC=""
+  EXEC_STDOUT=""
+  EXEC_STDERR=""
+  EXEC_WARNINGS=()
+}
+
 #------------------------------------------------------------------------------
 # Parsing CLI
 #------------------------------------------------------------------------------
@@ -667,6 +724,7 @@ parse_args() {
       --bridge) REQUEST_BRIDGE="${2-}"; shift 2 ;;
       --vmid) REQUEST_VMID="${2-}"; shift 2 ;;
       --hostname) REQUEST_HOSTNAME="${2-}"; shift 2 ;;
+      --command) REQUEST_COMMAND="${2-}"; shift 2 ;;
       --cores) CT_CORES="${2-}"; shift 2 ;;
       --memory) CT_MEMORY="${2-}"; shift 2 ;;
       --swap) CT_SWAP="${2-}"; shift 2 ;;
@@ -690,7 +748,7 @@ parse_args() {
     self-doc)
       :
       ;;
-    diagnose|collect|preflight-create|create-ct|get-ct-info|stop-ct|destroy-ct|ensure-ct)
+    diagnose|collect|list-guests|preflight-create|create-ct|get-ct-info|get-guest-status|exec-in-ct|stop-ct|destroy-ct|ensure-ct)
       [ -n "${HOST-}" ] || { printf 'Missing --host\n' >&2; exit 1; }
       [ -n "${USER_NAME-}" ] || { printf 'Missing --user\n' >&2; exit 1; }
       ;;
@@ -721,13 +779,20 @@ parse_args() {
   esac
 
   case "$MODE" in
-    get-ct-info|stop-ct|destroy-ct)
+    get-ct-info|get-guest-status|exec-in-ct|stop-ct|destroy-ct)
       [ -n "${REQUEST_VMID-}" ] || {
         printf 'Missing --vmid for --mode %s\n' "$MODE" >&2
         exit 1
       }
       ;;
   esac
+
+  if [ "$MODE" = "exec-in-ct" ]; then
+    [ -n "${REQUEST_COMMAND-}" ] || {
+      printf 'Missing --command for --mode exec-in-ct\n' >&2
+      exit 1
+    }
+  fi
 
   if [ "$MODE" = "create-ct" ] || [ "$MODE" = "ensure-ct" ]; then
     [ "$REQUEST_TYPE" = "ct" ] || {
@@ -1171,6 +1236,47 @@ collect_common_inventory() {
   collect_bridges || true
 }
 
+collect_guest_items() {
+  GUEST_ITEMS=()
+
+  local output line vmid status name
+  output="$(safe_assoc_get CMD_STDOUT pct "")"
+  if [ -n "$output" ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        ""|VMID*|*----*) continue ;;
+      esac
+      set -- $line
+      if [ $# -ge 3 ] && printf '%s' "$1" | grep -Eq '^[0-9]+$'; then
+        vmid="$1"
+        status="$2"
+        name="$3"
+        GUEST_ITEMS+=("ct|$vmid|$status|$name")
+      fi
+    done <<EOFPCT
+$output
+EOFPCT
+  fi
+
+  output="$(safe_assoc_get CMD_STDOUT qm "")"
+  if [ -n "$output" ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        ""|VMID*|*----*) continue ;;
+      esac
+      set -- $line
+      if [ $# -ge 3 ] && printf '%s' "$1" | grep -Eq '^[0-9]+$'; then
+        vmid="$1"
+        name="$2"
+        status="$3"
+        GUEST_ITEMS+=("vm|$vmid|$status|$name")
+      fi
+    done <<EOFQM
+$output
+EOFQM
+  fi
+}
+
 #------------------------------------------------------------------------------
 # Préflight / template
 #------------------------------------------------------------------------------
@@ -1506,6 +1612,12 @@ run_create_ct_phase() {
 #------------------------------------------------------------------------------
 # CT info / stop / destroy / ensure
 #------------------------------------------------------------------------------
+run_list_guests_phase() {
+  log INFO "Running list-guests phase"
+  collect_common_inventory
+  collect_guest_items
+}
+
 run_get_ct_info_phase() {
   log INFO "Running get-ct-info phase"
   collect_common_inventory
@@ -1525,6 +1637,7 @@ run_get_ct_info_phase() {
   fi
 
   INFO_EXISTS=true
+  INFO_TYPE="ct"
 
   run_check_pve "info_status" "pct status $(shell_quote "$REQUEST_VMID") | awk '{print \$2}'"
   INFO_STATUS="$(safe_assoc_get CMD_STDOUT info_status "")"
@@ -1541,6 +1654,93 @@ run_get_ct_info_phase() {
   INFO_RC="0"
   INFO_OUTPUT="ok"
   INFO_OK=true
+}
+
+run_get_guest_status_phase() {
+  log INFO "Running get-guest-status phase"
+  collect_common_inventory
+
+  if ! vmid_exists "$REQUEST_VMID"; then
+    INFO_EXISTS=false
+    INFO_OK=false
+    add_info_warning "Guest/VMID not found."
+    return 0
+  fi
+
+  INFO_EXISTS=true
+  INFO_TYPE="$(guest_type_by_vmid "$REQUEST_VMID" || true)"
+
+  case "$INFO_TYPE" in
+    ct)
+      run_check_pve "info_status" "pct status $(shell_quote "$REQUEST_VMID") | awk '{print \$2}'"
+      INFO_STATUS="$(safe_assoc_get CMD_STDOUT info_status "")"
+
+      run_check_pve "info_config" "pct config $(shell_quote "$REQUEST_VMID")"
+      INFO_CONFIG="$(safe_assoc_get CMD_OUTPUT info_config "")"
+
+      run_check_pve "info_ip" "pct exec $(shell_quote "$REQUEST_VMID") -- bash -lc $(shell_quote "ip -4 -o addr show dev ${CT_NET_IFACE} | awk '{print \$4}' | head -n1 | cut -d/ -f1") || true"
+      INFO_IP="$(safe_assoc_get CMD_STDOUT info_ip "")"
+
+      run_check_pve "info_name" "pct config $(shell_quote "$REQUEST_VMID") | awk -F': ' '/^hostname:/ {print \$2; exit}'"
+      INFO_NAME="$(safe_assoc_get CMD_STDOUT info_name "")"
+      ;;
+    vm)
+      run_check_pve "guest_status" "qm status $(shell_quote "$REQUEST_VMID") | awk '{print \$2}'"
+      INFO_STATUS="$(safe_assoc_get CMD_STDOUT guest_status "")"
+
+      run_check_pve "guest_config" "qm config $(shell_quote "$REQUEST_VMID")"
+      INFO_CONFIG="$(safe_assoc_get CMD_OUTPUT guest_config "")"
+
+      run_check_pve "guest_name" "qm config $(shell_quote "$REQUEST_VMID") | awk -F': ' '/^name:/ {print \$2; exit}'"
+      INFO_NAME="$(safe_assoc_get CMD_STDOUT guest_name "")"
+      INFO_IP=""
+      ;;
+    *)
+      INFO_OK=false
+      add_info_warning "Unable to determine guest type."
+      return 0
+      ;;
+  esac
+
+  INFO_RC="0"
+  INFO_OUTPUT="ok"
+  INFO_OK=true
+}
+
+run_exec_in_ct_phase() {
+  log INFO "Running exec-in-ct phase"
+  reset_exec_state
+  collect_common_inventory
+
+  if ! vmid_exists "$REQUEST_VMID"; then
+    EXEC_EXISTS=false
+    EXEC_OK=false
+    add_exec_warning "CT/VMID not found."
+    return 0
+  fi
+
+  if ! in_array_exact "$REQUEST_VMID" "${EXISTING_CT[@]}"; then
+    EXEC_EXISTS=false
+    EXEC_OK=false
+    add_exec_warning "Requested VMID exists but is not a CT."
+    return 0
+  fi
+
+  EXEC_EXISTS=true
+  run_check_pve "exec_ct_status" "pct status $(shell_quote "$REQUEST_VMID") | awk '{print \$2}'"
+  EXEC_STATUS="$(safe_assoc_get CMD_STDOUT exec_ct_status "")"
+
+  run_check_pve "exec_in_ct" "pct exec $(shell_quote "$REQUEST_VMID") -- bash -lc $(shell_quote "$REQUEST_COMMAND")"
+  EXEC_RC="$(safe_assoc_get CMD_RC exec_in_ct 1)"
+  EXEC_STDOUT="$(safe_assoc_get CMD_STDOUT exec_in_ct "")"
+  EXEC_STDERR="$(safe_assoc_get CMD_STDERR exec_in_ct "")"
+
+  if [ "$EXEC_RC" -eq 0 ]; then
+    EXEC_OK=true
+  else
+    EXEC_OK=false
+    add_exec_warning "Command execution in CT failed."
+  fi
 }
 
 run_stop_ct_phase() {
@@ -1770,6 +1970,9 @@ analyze_findings() {
       if [ -n "$NEXTID" ]; then add_recommendation "Collect phase returned a next available VMID."; else add_collect_warning "Collect phase did not return nextid."; fi
       if [ "${#STORAGES[@]}" -gt 0 ]; then add_recommendation "Collect phase returned at least one available storage."; fi
       ;;
+    list-guests)
+      if [ "${#GUEST_ITEMS[@]}" -gt 0 ]; then add_recommendation "Guest inventory returned CTs and/or VMs."; else add_collect_warning "Guest inventory returned no CT or VM."; fi
+      ;;
     preflight-create)
       if [ "$PREFLIGHT_TYPE_VALID" = true ]; then add_recommendation "Preflight create type is valid."; fi
       if [ -n "$PREFLIGHT_VMID_SUGGESTED" ]; then add_recommendation "Preflight create suggested an available VMID."; fi
@@ -1783,6 +1986,12 @@ analyze_findings() {
       ;;
     get-ct-info)
       if [ "$INFO_EXISTS" = true ]; then add_recommendation "CT information was collected."; fi
+      ;;
+    get-guest-status)
+      if [ "$INFO_EXISTS" = true ]; then add_recommendation "Guest status information was collected."; fi
+      ;;
+    exec-in-ct)
+      if [ "$EXEC_OK" = true ]; then add_recommendation "Command executed successfully inside the CT."; fi
       ;;
     stop-ct)
       if [ "$STOP_OK" = true ]; then add_recommendation "CT stop completed successfully."; fi
@@ -1828,10 +2037,12 @@ self_doc_success() { return 0; }
 compute_ok() {
   case "$MODE" in
     self-doc) self_doc_success ;;
-    diagnose|collect) base_checks_ok ;;
+    diagnose|collect|list-guests) base_checks_ok ;;
     preflight-create) preflight_create_ready ;;
     create-ct) create_ct_success ;;
     get-ct-info) get_ct_info_success ;;
+    get-guest-status) get_ct_info_success ;;
+    exec-in-ct) [ "$EXEC_OK" = true ] ;;
     stop-ct) stop_ct_success ;;
     destroy-ct) destroy_ct_success ;;
     ensure-ct) ensure_ct_success ;;
@@ -1859,6 +2070,9 @@ summary_text() {
   fi
 
   case "$MODE" in
+    list-guests)
+      if base_checks_ok; then printf 'Guest inventory was collected successfully.'; else printf 'Guest inventory collection failed.'; fi
+      ;;
     preflight-create)
       if preflight_create_ready; then printf 'Preflight create checks look healthy.'; else printf 'Preflight create completed, but one or more requested checks failed.'; fi
       ;;
@@ -1871,6 +2085,12 @@ summary_text() {
       ;;
     get-ct-info)
       if get_ct_info_success; then printf 'CT information was collected successfully.'; else printf 'CT information collection failed.'; fi
+      ;;
+    get-guest-status)
+      if get_ct_info_success; then printf 'Guest status was collected successfully.'; else printf 'Guest status collection failed.'; fi
+      ;;
+    exec-in-ct)
+      if [ "$EXEC_OK" = true ]; then printf 'Command executed successfully inside the CT.'; else printf 'Command execution inside the CT failed.'; fi
       ;;
     stop-ct)
       if stop_ct_success; then printf 'CT stop completed successfully.'; else printf 'CT stop failed.'; fi
@@ -1993,6 +2213,26 @@ emit_json() {
       printf '},'
     fi
 
+    if [ "$MODE" = "list-guests" ]; then
+      printf '"result":{"guests":['
+      local first_guest=1 guest_item guest_type guest_vmid guest_status guest_name
+      for guest_item in "${GUEST_ITEMS[@]}"; do
+        IFS='|' read -r guest_type guest_vmid guest_status guest_name <<EOFGUEST
+$guest_item
+EOFGUEST
+        if [ $first_guest -eq 0 ]; then
+          printf ','
+        fi
+        printf '{"type":"%s","vmid":"%s","status":"%s","name":"%s"}' \
+          "$(printf '%s' "$guest_type" | json_escape)" \
+          "$(printf '%s' "$guest_vmid" | json_escape)" \
+          "$(printf '%s' "$guest_status" | json_escape)" \
+          "$(printf '%s' "$guest_name" | json_escape)"
+        first_guest=0
+      done
+      printf ']},'
+    fi
+
     if [ "$MODE" = "preflight-create" ]; then
       printf '"preflight":{'
       printf '"type_requested":"%s",' "$(printf '%s' "${REQUEST_TYPE-}" | json_escape)"
@@ -2049,6 +2289,7 @@ emit_json() {
     if [ "$MODE" = "get-ct-info" ]; then
       printf '"result":{'
       printf '"exists":%s,' "$(json_bool "$INFO_EXISTS")"
+      printf '"type":"%s",' "$(printf '%s' "${INFO_TYPE-ct}" | json_escape)"
       printf '"vmid":"%s",' "$(printf '%s' "${REQUEST_VMID-}" | json_escape)"
       printf '"status":"%s",' "$(printf '%s' "${INFO_STATUS-}" | json_escape)"
       printf '"name":"%s",' "$(printf '%s' "${INFO_NAME-}" | json_escape)"
@@ -2057,6 +2298,31 @@ emit_json() {
       printf '"rc":"%s",' "$(printf '%s' "${INFO_RC-}" | json_escape)"
       printf '"output":"%s",' "$(printf '%s' "${INFO_OUTPUT-}" | json_escape_truncated)"
       printf '"warnings":'; json_array_strings "${INFO_WARNINGS[@]}"
+      printf '},'
+    fi
+
+    if [ "$MODE" = "get-guest-status" ]; then
+      printf '"result":{'
+      printf '"exists":%s,' "$(json_bool "$INFO_EXISTS")"
+      printf '"type":"%s",' "$(printf '%s' "${INFO_TYPE-}" | json_escape)"
+      printf '"vmid":"%s",' "$(printf '%s' "${REQUEST_VMID-}" | json_escape)"
+      printf '"status":"%s",' "$(printf '%s' "${INFO_STATUS-}" | json_escape)"
+      printf '"name":"%s",' "$(printf '%s' "${INFO_NAME-}" | json_escape)"
+      printf '"ip":"%s",' "$(printf '%s' "${INFO_IP-}" | json_escape)"
+      printf '"config":"%s",' "$(printf '%s' "${INFO_CONFIG-}" | json_escape_truncated)"
+      printf '},'
+    fi
+
+    if [ "$MODE" = "exec-in-ct" ]; then
+      printf '"result":{'
+      printf '"exists":%s,' "$(json_bool "$EXEC_EXISTS")"
+      printf '"vmid":"%s",' "$(printf '%s' "${REQUEST_VMID-}" | json_escape)"
+      printf '"status":"%s",' "$(printf '%s' "${EXEC_STATUS-}" | json_escape)"
+      printf '"command":"%s",' "$(printf '%s' "${REQUEST_COMMAND-}" | json_escape)"
+      printf '"rc":"%s",' "$(printf '%s' "${EXEC_RC-}" | json_escape)"
+      printf '"stdout":"%s",' "$(printf '%s' "${EXEC_STDOUT-}" | json_escape_truncated)"
+      printf '"stderr":"%s",' "$(printf '%s' "${EXEC_STDERR-}" | json_escape_truncated)"
+      printf '"warnings":'; json_array_strings "${EXEC_WARNINGS[@]}"
       printf '},'
     fi
 
@@ -2159,9 +2425,12 @@ main() {
 
   case "$MODE" in
     collect) run_collect_phase ;;
+    list-guests) run_list_guests_phase ;;
     preflight-create) run_preflight_create_phase ;;
     create-ct) reset_create_state; run_create_ct_phase ;;
     get-ct-info) run_get_ct_info_phase ;;
+    get-guest-status) run_get_guest_status_phase ;;
+    exec-in-ct) reset_exec_state; run_exec_in_ct_phase ;;
     stop-ct) run_stop_ct_phase ;;
     destroy-ct) run_destroy_ct_phase ;;
     ensure-ct) run_ensure_ct_phase ;;

@@ -28,7 +28,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "proxmox-diagnose.sh": {
     name: "proxmox-diagnose.sh",
     file_name: "proxmox-diagnose.sh",
-    version: "1.0.3",
+    version: "1.0.4",
     required_env: [],
     description: "Diagnostic et orchestration Proxmox via SSH, avec modes collect, preflight et gestion CT.",
   },
