@@ -22,7 +22,7 @@ type InputScriptEnvDefinition = string | {
 };
 
 export const SERVER_NAME = "mcp-server-starter";
-export const SERVER_VERSION = "1.0.3";
+export const SERVER_VERSION = "1.0.4";
 
 const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "proxmox-diagnose.sh": {
@@ -30,7 +30,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
     file_name: "proxmox-diagnose.sh",
     version: "1.0.4",
     required_env: [],
-    description: "Diagnostic et orchestration Proxmox via SSH, avec modes collect, preflight et gestion CT.",
+    description: "Diagnostic et orchestration Proxmox via SSH avec inventaire CT/LXC, creation de CT, lecture d'etat, execution dans CT et operations de cycle de vie.",
   },
   "jarvis_sync_build_redeploy.sh": {
     name: "jarvis_sync_build_redeploy.sh",

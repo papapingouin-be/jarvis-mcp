@@ -17,7 +17,7 @@ describe("approved script registry", () => {
     assert.strictEqual(registry.isAllowed("jarvis_sync_build_redeploy.sh"), true);
     assert(registry.listNames().includes("jarvis_sync_build_redeploy.sh"));
     assert.strictEqual(registry.get("jarvis_sync_build_redeploy.sh").file_name, "jarvis_sync_build_redeploy.sh");
-    assert.strictEqual(registry.get("jarvis_sync_build_redeploy.sh").version, "1.0.0");
+    assert.strictEqual(registry.get("jarvis_sync_build_redeploy.sh").version, "1.3.4");
   });
 
   it("returns script descriptions", () => {

@@ -5,7 +5,7 @@ import type { RegisterableModule } from "../registry/types.js";
 const jarvisRunScriptModule: RegisterableModule = {
   type: "tool",
   name: "jarvis_run_script",
-  description: "Execute approved scripts in collect/execute phases",
+  description: "Execute approved infrastructure scripts in collect/execute phases, including advanced Proxmox and redeploy workflows.",
   register(server: McpServer) {
     registerJarvisRunScriptTool(server);
   },

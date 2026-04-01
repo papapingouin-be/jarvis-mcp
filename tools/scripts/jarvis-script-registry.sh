@@ -275,10 +275,24 @@ get_scripts_root() {
 
 is_registry_candidate() {
   local path="$1"
-  if [[ -x "$path" || "$path" == *.sh ]]; then
-    return 0
-  fi
-  return 1
+  local file_name
+  file_name="$(basename "$path")"
+
+  case "$file_name" in
+    *.sh)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  case "$file_name" in
+    *-core.sh|jarvis-script-registry.sh|git_mirror_refs.sh)
+      return 1
+      ;;
+  esac
+
+  return 0
 }
 
 list_candidate_script_paths() {
