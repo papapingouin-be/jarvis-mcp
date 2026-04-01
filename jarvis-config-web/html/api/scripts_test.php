@@ -207,6 +207,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') ===
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_GET['action'] ?? '') === 'kill_job') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    try {
+        jarvis_check_csrf();
+        $jobId = trim((string) ($_POST['job_id'] ?? ''));
+        if ($jobId === '') {
+            throw new RuntimeException('job_id obligatoire.');
+        }
+
+        echo json_encode([
+            'ok' => true,
+            'job' => jarvis_kill_script_job($jobId),
+        ], JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        http_response_code(400);
+        echo json_encode([
+            'ok' => false,
+            'message' => $e->getMessage(),
+        ], JSON_UNESCAPED_SLASHES);
+    }
+
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         jarvis_check_csrf();

@@ -573,12 +573,23 @@ function bindScriptsTestForm() {
     return;
   }
 
+  let activeScriptJobPoll = null;
+  const csrfToken = testForm.querySelector('input[name="csrf_token"]')?.value || "";
+
   const renderScriptJobStatus = (job = {}) => {
     const status = String(job.status || "unknown").toUpperCase();
-    const statusClass = status === "COMPLETED" ? "up" : status === "FAILED" ? "down" : "warn";
+    const statusClass = status === "COMPLETED" ? "up" : status === "FAILED" || status === "KILLED" ? "down" : "warn";
     const stdout = escapeHtml(job.stdout || "");
     const stderr = escapeHtml(job.stderr || "");
     const exitCode = job.exit_code === null || job.exit_code === undefined ? "" : String(job.exit_code);
+    const actions = status === "RUNNING"
+      ? `<div class="actions">
+          <button class="secondary-btn" type="button" data-script-job-refresh="${escapeHtml(job.job_id || "")}">Rafraichir</button>
+          <button class="secondary-btn" type="button" data-script-job-kill="${escapeHtml(job.job_id || "")}">Arreter</button>
+        </div>`
+      : `<div class="actions">
+          <button class="secondary-btn" type="button" data-script-job-refresh="${escapeHtml(job.job_id || "")}">Rafraichir</button>
+        </div>`;
 
     return `<div class="card">
       <h3>Execution asynchrone</h3>
@@ -587,6 +598,7 @@ function bindScriptsTestForm() {
       <p><strong>Phase</strong> : <code>${escapeHtml(job.phase || "")}</code></p>
       <p><strong>Service</strong> : <code>${escapeHtml(job.service_name || "")}</code></p>
       <p><strong>Exit code</strong> : <code>${escapeHtml(exitCode)}</code></p>
+      ${actions}
       <h4>stdout</h4>
       <pre>${stdout || "(vide)"}</pre>
       <h4>stderr</h4>
@@ -594,7 +606,55 @@ function bindScriptsTestForm() {
     </div>`;
   };
 
-  const pollScriptJob = async (jobId, result) => {
+  const bindScriptJobActions = (result) => {
+    result.querySelectorAll("[data-script-job-refresh]").forEach((button) => {
+      button.onclick = async () => {
+        const jobId = button.getAttribute("data-script-job-refresh") || "";
+        if (jobId) {
+          await pollScriptJob(jobId, result, { single: true });
+        }
+      };
+    });
+
+    result.querySelectorAll("[data-script-job-kill]").forEach((button) => {
+      button.onclick = async () => {
+        const jobId = button.getAttribute("data-script-job-kill") || "";
+        if (!jobId) {
+          return;
+        }
+
+        if (!confirm("Arreter ce job ?")) {
+          return;
+        }
+
+        const body = new URLSearchParams();
+        body.set("csrf_token", csrfToken);
+        body.set("job_id", jobId);
+
+        const response = await fetch("api/scripts_test.php?action=kill_job", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: body.toString(),
+        });
+        const payload = await response.json();
+
+        if (!payload.ok) {
+          result.innerHTML = `<div class="notice error"><pre>${payload.message || "Erreur kill_job"}</pre></div>`;
+          return;
+        }
+
+        result.innerHTML = renderScriptJobStatus(payload.job || {});
+        bindScriptJobActions(result);
+      };
+    });
+  };
+
+  const pollScriptJob = async (jobId, result, options = {}) => {
+    if (activeScriptJobPoll && !options.single) {
+      window.clearTimeout(activeScriptJobPoll);
+      activeScriptJobPoll = null;
+    }
+
     let attempts = 0;
 
     while (attempts < 240) {
@@ -608,8 +668,9 @@ function bindScriptsTestForm() {
       }
 
       result.innerHTML = renderScriptJobStatus(payload.job || {});
+      bindScriptJobActions(result);
 
-      if ((payload.job?.status || "") !== "running") {
+      if ((payload.job?.status || "") !== "running" || options.single) {
         return;
       }
 
@@ -648,6 +709,12 @@ function bindScriptsTestForm() {
   const confirmedInput = document.getElementById("scripts-test-confirmed");
   const paramsJsonInput = document.getElementById("scripts-test-params-json");
   const result = document.getElementById("scripts-test-result");
+
+  const existingJobNode = result?.querySelector?.("[data-script-job-id]");
+  const existingJobId = existingJobNode?.getAttribute("data-script-job-id");
+  if (existingJobId) {
+    pollScriptJob(existingJobId, result);
+  }
 
   setServiceSource("");
   updateScriptsTestDebug([], "");

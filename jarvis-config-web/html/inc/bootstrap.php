@@ -1672,6 +1672,25 @@ function jarvis_get_script_job(string $jobId): array
         if ($exitCode !== 0) {
             $status = 'failed';
         }
+    } elseif (($meta['status'] ?? '') === 'killed') {
+        $status = 'killed';
+    } elseif (($meta['pid'] ?? '') !== '') {
+        $pid = (int) $meta['pid'];
+        if ($pid > 0) {
+            $running = false;
+            if (function_exists('posix_kill')) {
+                $running = @posix_kill($pid, 0);
+            } else {
+                $probe = [];
+                $probeExit = 1;
+                @exec('kill -0 ' . $pid . ' >/dev/null 2>&1', $probe, $probeExit);
+                $running = $probeExit === 0;
+            }
+
+            if (!$running) {
+                $status = 'failed';
+            }
+        }
     }
 
     return [
@@ -1686,6 +1705,41 @@ function jarvis_get_script_job(string $jobId): array
         'stdout' => jarvis_truncate_text(trim($stdout)),
         'stderr' => jarvis_truncate_text(trim($stderr)),
     ];
+}
+
+function jarvis_kill_script_job(string $jobId): array
+{
+    $job = jarvis_get_script_job($jobId);
+    if (($job['status'] ?? '') !== 'running') {
+        return $job;
+    }
+
+    $pid = (int) ($job['pid'] ?? 0);
+    if ($pid <= 0) {
+        throw new RuntimeException('PID de job introuvable.');
+    }
+
+    $killed = false;
+    if (function_exists('posix_kill')) {
+        $killed = @posix_kill($pid, SIGTERM);
+    } else {
+        $output = [];
+        $exitCode = 1;
+        @exec('kill ' . $pid . ' >/dev/null 2>&1', $output, $exitCode);
+        $killed = $exitCode === 0;
+    }
+
+    if (!$killed) {
+        throw new RuntimeException('Impossible d arreter le job.');
+    }
+
+    $metaFile = jarvis_script_job_path($jobId, 'meta.json');
+    $meta = jarvis_read_json_file($metaFile);
+    $meta['status'] = 'killed';
+    $meta['killed_at'] = date('c');
+    jarvis_write_json_file($metaFile, $meta);
+
+    return jarvis_get_script_job($jobId);
 }
 
 function services_default(): array
