@@ -7,17 +7,15 @@ import type { RegisterableModule } from "../registry/types.js";
 const PROXMOX_SCRIPT_NAME = "proxmox-diagnose.sh";
 const service = new ScriptRunnerService();
 
-const optionalTrimmedString = z.string().trim().min(1).optional();
-
 const connectionFields = {
   host: z.string().trim().min(1).describe("Proxmox host or IP address."),
   user: z.string().trim().min(1).describe("SSH user for the Proxmox host."),
-  password: optionalTrimmedString.describe(
+  password: z.string().trim().min(1).optional().describe(
     "Optional SSH password. Also used as the CT root password for create-ct when no separate secret exists."
   ),
-  port: z.union([z.string().trim().min(1), z.number().int().positive()]).optional().describe("SSH port. Defaults to 22."),
+  port: z.string().trim().min(1).optional().describe("SSH port. Defaults to 22."),
   sudo: z.boolean().optional().default(true).describe("Run Proxmox commands through sudo when needed."),
-  identity_file: optionalTrimmedString.describe("Optional SSH private key path."),
+  identity_file: z.string().trim().min(1).optional().describe("Optional SSH private key path."),
   verbose: z.boolean().optional().default(true).describe("Include execution trace lines in the result."),
   trace: z.boolean().optional().default(false).describe("Ask the underlying Proxmox script for extra tracing."),
 };
@@ -28,15 +26,15 @@ const listCtsInputSchema = {
 
 const createCtInputSchema = {
   ...connectionFields,
-  vmid: z.union([z.string().trim().min(1), z.number().int().positive()]).describe("CT VMID to create."),
+  vmid: z.string().trim().min(1).describe("CT VMID to create."),
   hostname: z.string().trim().min(1).describe("Hostname for the new CT."),
   template: z.string().trim().min(1).describe("Template archive name, for example debian-12-standard_12.7-1_amd64.tar.zst."),
   storage: z.string().trim().min(1).describe("Target Proxmox storage, for example local-lvm."),
   bridge: z.string().trim().min(1).describe("Network bridge, for example vmbr0."),
-  cores: z.union([z.string().trim().min(1), z.number().int().positive()]).optional().describe("CPU cores. Defaults to 2."),
-  memory: z.union([z.string().trim().min(1), z.number().int().positive()]).optional().describe("Memory in MB. Defaults to 2048."),
-  swap: z.union([z.string().trim().min(1), z.number().int().nonnegative()]).optional().describe("Swap in MB. Defaults to 512."),
-  disk: z.union([z.string().trim().min(1), z.number().int().positive()]).optional().describe("Disk size in GB. Defaults to 8."),
+  cores: z.string().trim().min(1).optional().describe("CPU cores. Defaults to 2."),
+  memory: z.string().trim().min(1).optional().describe("Memory in MB. Defaults to 2048."),
+  swap: z.string().trim().min(1).optional().describe("Swap in MB. Defaults to 512."),
+  disk: z.string().trim().min(1).optional().describe("Disk size in GB. Defaults to 8."),
   install_ssh: z.boolean().optional().default(true).describe("Install and enable OpenSSH inside the CT after creation."),
   confirmed: z.boolean().optional().default(false).describe("Must be true to actually create the CT."),
 };
@@ -45,7 +43,7 @@ type BaseConnectionArgs = {
   host: string;
   user: string;
   password?: string;
-  port?: string | number;
+  port?: string;
   sudo?: boolean;
   identity_file?: string;
   verbose?: boolean;
