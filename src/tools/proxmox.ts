@@ -24,6 +24,18 @@ const listCtsInputSchema = {
   ...connectionFields,
 };
 
+const ctInfoInputSchema = {
+  ...connectionFields,
+  vmid: z.string().trim().min(1).describe("Existing CT VMID to inspect."),
+};
+
+const execInCtInputSchema = {
+  ...connectionFields,
+  vmid: z.string().trim().min(1).describe("Existing CT VMID where the command will be executed."),
+  command: z.string().trim().min(1).describe("Shell command to execute inside the CT."),
+  confirmed: z.boolean().optional().default(false).describe("Must be true to execute the command inside the CT."),
+};
+
 const createCtInputSchema = {
   ...connectionFields,
   vmid: z.string().trim().min(1).describe("CT VMID to create."),
@@ -140,6 +152,15 @@ function buildCtSummary(rawResult: Record<string, unknown>): Record<string, unkn
   };
 }
 
+function getNestedResult(rawResult: Record<string, unknown>): Record<string, unknown> {
+  const nestedResult = rawResult.result;
+  if (typeof nestedResult !== "object" || nestedResult === null || Array.isArray(nestedResult)) {
+    return {};
+  }
+
+  return nestedResult as Record<string, unknown>;
+}
+
 export function registerProxmoxTools(server: McpServer): void {
   server.tool(
     "proxmox_list_cts",
@@ -167,6 +188,84 @@ export function registerProxmoxTools(server: McpServer): void {
                 count: cts.length,
                 cts,
                 summary: rawResult.result.summary ?? null,
+              }),
+            },
+          ],
+        };
+      } catch (error: unknown) {
+        return toErrorResponse(error);
+      }
+    }
+  );
+
+  server.tool(
+    "proxmox_get_ct_info",
+    "Get status, hostname, config, and detected IP information for a Proxmox LXC CT. Use this when the user asks about a specific CT.",
+    ctInfoInputSchema,
+    async (args) => {
+      try {
+        const rawResult = await service.run({
+          script_name: PROXMOX_SCRIPT_NAME,
+          phase: "execute",
+          confirmed: true,
+          verbose: args.verbose,
+          params: compactParams({
+            ...buildBaseParams(args, "get-ct-info"),
+            vmid: args.vmid,
+          }),
+        });
+
+        const result = getNestedResult(rawResult.result);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: true,
+                mode: "get-ct-info",
+                ct: buildCtSummary(rawResult.result),
+                result,
+              }),
+            },
+          ],
+        };
+      } catch (error: unknown) {
+        return toErrorResponse(error);
+      }
+    }
+  );
+
+  server.tool(
+    "proxmox_exec_in_ct",
+    "Execute a shell command inside an existing Proxmox LXC CT. Use this when the user asks to run, test, install, ping, inspect, or troubleshoot something from a CT.",
+    execInCtInputSchema,
+    async (args) => {
+      try {
+        const rawResult = await service.run({
+          script_name: PROXMOX_SCRIPT_NAME,
+          phase: "execute",
+          confirmed: args.confirmed,
+          verbose: args.verbose,
+          params: compactParams({
+            ...buildBaseParams(args, "exec-in-ct"),
+            vmid: args.vmid,
+            command: args.command,
+          }),
+        });
+
+        const result = getNestedResult(rawResult.result);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: true,
+                mode: "exec-in-ct",
+                vmid: args.vmid,
+                command: args.command,
+                result,
               }),
             },
           ],
@@ -227,7 +326,7 @@ export function registerProxmoxTools(server: McpServer): void {
 const proxmoxModule: RegisterableModule = {
   type: "tool",
   name: "proxmox",
-  description: "Dedicated Proxmox CT tools for natural list/create workflows.",
+  description: "Dedicated Proxmox CT tools for natural list, inspect, exec, and create workflows.",
   register(server: McpServer) {
     registerProxmoxTools(server);
   },
