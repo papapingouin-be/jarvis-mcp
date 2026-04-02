@@ -35,7 +35,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "jarvis_sync_build_redeploy.sh": {
     name: "jarvis_sync_build_redeploy.sh",
     file_name: "jarvis_sync_build_redeploy.sh",
-    version: "1.3.7",
+    version: "1.3.8",
     required_env: [
       {
         name: "jarvis_tools_GITHUB_TOKEN",
@@ -90,6 +90,18 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
         required: false,
         secret: false,
         description: "Portainer stack id for the jarvis-tools redeploy.",
+      },
+      {
+        name: "JARVIS_TOOLS_CONTAINER_NAME",
+        required: false,
+        secret: false,
+        description: "Container name expected to restart when the jarvis-tools stack is redeployed.",
+      },
+      {
+        name: "PORTAINER_REDEPLOY_WAIT_SECONDS",
+        required: false,
+        secret: false,
+        description: "Maximum wait time used to confirm the jarvis-tools container was really restarted.",
       },
       {
         name: "JARVIS_MCPO_CONTAINER_NAME",
