@@ -371,6 +371,10 @@ function buildSshCommand(config: ResolvedConfig, remoteCommand: string): Command
   };
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 function buildRsyncCommand(
   config: ResolvedConfig,
   sourcePath: string,
@@ -824,12 +828,16 @@ export class JarvisSyncBuildRedeployService {
           }
 
           requireConfigValue(config.mcpoContainerName, "JARVIS_MCPO_CONTAINER_NAME");
-          const remoteDockerBase = config.useSudo ? "sudo docker" : "docker";
+          const remoteDockerBase = config.useSudo
+            ? (config.sshAuthMode === "sshpass" && config.sshPassword
+              ? `printf '%s\\n' ${shellQuote(config.sshPassword)} | sudo -S -p '' docker`
+              : "sudo docker")
+            : "docker";
           await executeCommand(
             this.commandRunner,
             buildSshCommand(
               config,
-              `${remoteDockerBase} ps -a --format '{{.Names}}' | grep -Fxq '${config.mcpoContainerName}'`,
+              `${remoteDockerBase} ps -a --format '{{.Names}}' | grep -Fxq ${shellQuote(config.mcpoContainerName)}`,
             ),
             config.env,
             trace,
@@ -837,7 +845,7 @@ export class JarvisSyncBuildRedeployService {
           );
           await executeCommand(
             this.commandRunner,
-            buildSshCommand(config, `${remoteDockerBase} restart '${config.mcpoContainerName}'`),
+            buildSshCommand(config, `${remoteDockerBase} restart ${shellQuote(config.mcpoContainerName)}`),
             config.env,
             trace,
             input.dry_run,

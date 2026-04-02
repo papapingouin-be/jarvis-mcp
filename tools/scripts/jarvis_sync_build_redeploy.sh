@@ -725,6 +725,10 @@ run_sensitive() {
   "$@"
 }
 
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "${1:-}" | sed "s/'/'\\\\''/g")"
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Commande absente: $1" "$EXIT_ENV"
 }
@@ -1084,6 +1088,47 @@ remote_exec() {
   esac
 }
 
+remote_exec_sensitive() {
+  local display_cmd="$1"
+  local remote_cmd="$2"
+  local host port
+  host="$(ssh_host)"
+  port="$(ssh_port)"
+
+  case "$SSH_AUTH_MODE" in
+    sshpass)
+      run_sensitive \
+        "sshpass ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $port ${JARVIS_srv_USER}@${host} $display_cmd" \
+        env SSHPASS="$JARVIS_srv_PSWD" sshpass -e ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -p "$port" \
+          "${JARVIS_srv_USER}@${host}" \
+          "$remote_cmd"
+      ;;
+    keyfile)
+      run ssh \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -i "$JARVIS_SSH_KEY_PATH" \
+        -p "$port" \
+        "${JARVIS_srv_USER}@${host}" \
+        "$remote_cmd"
+      ;;
+    agent_or_default_key)
+      run ssh \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -p "$port" \
+        "${JARVIS_srv_USER}@${host}" \
+        "$remote_cmd"
+      ;;
+    *)
+      die "Mode SSH inconnu: $SSH_AUTH_MODE" "$EXIT_DEPLOY_WEB"
+      ;;
+  esac
+}
+
 rsync_copy_dir() {
   local source_path="$1"
   local remote_path="$2"
@@ -1229,6 +1274,10 @@ docker_restart_container() {
 docker_restart_container_remote() {
   local container_name="$1"
   local remote_docker_cmd
+  local remote_ps_cmd
+  local remote_restart_cmd
+  local quoted_container
+  local quoted_password
 
   if [[ "$DRY_RUN" == "1" ]]; then
     info "[DRY-RUN] remote docker restart $container_name"
@@ -1237,11 +1286,20 @@ docker_restart_container_remote() {
 
   remote_docker_cmd="docker"
   if [[ "$USE_SUDO" == "1" ]]; then
-    remote_docker_cmd="sudo docker"
+    if [[ "$SSH_AUTH_MODE" == "sshpass" && -n "${JARVIS_srv_PSWD:-}" ]]; then
+      quoted_password="$(shell_quote "$JARVIS_srv_PSWD")"
+      remote_docker_cmd="printf '%s\n' $quoted_password | sudo -S -p '' docker"
+    else
+      remote_docker_cmd="sudo docker"
+    fi
   fi
 
-  remote_exec "$remote_docker_cmd ps -a --format '{{.Names}}' | grep -Fxq '$container_name'"
-  remote_exec "$remote_docker_cmd restart '$container_name'"
+  quoted_container="$(shell_quote "$container_name")"
+  remote_ps_cmd="$remote_docker_cmd ps -a --format '{{.Names}}' | grep -Fxq $quoted_container"
+  remote_restart_cmd="$remote_docker_cmd restart $quoted_container"
+
+  remote_exec_sensitive "sudo docker ps -a --format '{{.Names}}' | grep -Fxq '$container_name'" "$remote_ps_cmd"
+  remote_exec_sensitive "sudo docker restart '$container_name'" "$remote_restart_cmd"
 }
 
 restart_runtime() {
