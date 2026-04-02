@@ -824,13 +824,24 @@ export class JarvisSyncBuildRedeployService {
           }
 
           requireConfigValue(config.mcpoContainerName, "JARVIS_MCPO_CONTAINER_NAME");
-
-          const dockerCommand = config.useSudo ? "sudo" : "docker";
-          const dockerArgs = config.useSudo ? ["docker", "restart", config.mcpoContainerName] : ["restart", config.mcpoContainerName];
-          await executeCommand(this.commandRunner, {
-            command: dockerCommand,
-            args: dockerArgs,
-          }, config.env, trace, input.dry_run);
+          const remoteDockerBase = config.useSudo ? "sudo docker" : "docker";
+          await executeCommand(
+            this.commandRunner,
+            buildSshCommand(
+              config,
+              `${remoteDockerBase} ps -a --format '{{.Names}}' | grep -Fxq '${config.mcpoContainerName}'`,
+            ),
+            config.env,
+            trace,
+            input.dry_run,
+          );
+          await executeCommand(
+            this.commandRunner,
+            buildSshCommand(config, `${remoteDockerBase} restart '${config.mcpoContainerName}'`),
+            config.env,
+            trace,
+            input.dry_run,
+          );
           return "Redemarrage MCPO OK";
         });
       }

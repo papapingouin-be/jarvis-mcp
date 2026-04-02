@@ -1226,13 +1226,31 @@ docker_restart_container() {
   run docker_cmd restart "$container_name"
 }
 
+docker_restart_container_remote() {
+  local container_name="$1"
+  local remote_docker_cmd
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    info "[DRY-RUN] remote docker restart $container_name"
+    return 0
+  fi
+
+  remote_docker_cmd="docker"
+  if [[ "$USE_SUDO" == "1" ]]; then
+    remote_docker_cmd="sudo docker"
+  fi
+
+  remote_exec "$remote_docker_cmd ps -a --format '{{.Names}}' | grep -Fxq '$container_name'"
+  remote_exec "$remote_docker_cmd restart '$container_name'"
+}
+
 restart_runtime() {
   case "$RESTART_STRATEGY" in
     webhook|portainer-webhook)
       trigger_webhook "$JARVIS_TOOLS_WEBHOOK_URL"
       ;;
     docker)
-      docker_restart_container "$JARVIS_MCPO_CONTAINER_NAME"
+      docker_restart_container_remote "$JARVIS_MCPO_CONTAINER_NAME"
       ;;
     *)
       die "Strategie de restart inconnue: $RESTART_STRATEGY" "$EXIT_DOCKER"
@@ -1289,8 +1307,8 @@ require_env_for_selected_phases JARVIS_LOCAL_REPO "${JARVIS_LOCAL_REPO:-}" all s
 require_env_for_selected_phases jarvis_tools_GITHUB_TOKEN "${jarvis_tools_GITHUB_TOKEN:-}" all sync mirror
 require_env_for_selected_phases jarvis_tools_GITEA_TOKEN "${jarvis_tools_GITEA_TOKEN:-}" all mirror
 require_env_for_selected_phases JARVIS_TOOLS_WEBHOOK_URL "${JARVIS_TOOLS_WEBHOOK_URL:-}" all webhook
-require_env_for_selected_phases JARVIS_srv_SSH "${JARVIS_srv_SSH:-}" all deploy-web deploy-scripts
-require_env_for_selected_phases JARVIS_srv_USER "${JARVIS_srv_USER:-}" all deploy-web deploy-scripts
+require_env_for_selected_phases JARVIS_srv_SSH "${JARVIS_srv_SSH:-}" all deploy-web deploy-scripts restart
+require_env_for_selected_phases JARVIS_srv_USER "${JARVIS_srv_USER:-}" all deploy-web deploy-scripts restart
 if [[ "$RESTART_STRATEGY" == "webhook" || "$RESTART_STRATEGY" == "portainer-webhook" ]]; then
   require_env_for_selected_phases JARVIS_TOOLS_WEBHOOK_URL "${JARVIS_TOOLS_WEBHOOK_URL:-}" all restart
 fi
@@ -1301,10 +1319,9 @@ need_cmd curl
 need_cmd bash
 need_cmd python3
 need_cmd jq
-command_required_for_selected_phases ssh all deploy-web deploy-scripts
+command_required_for_selected_phases ssh all deploy-web deploy-scripts restart
 command_required_for_selected_phases rsync all deploy-web deploy-scripts
 if [[ "$RESTART_STRATEGY" == "docker" ]]; then
-  command_required_for_selected_phases docker all restart
   : "${JARVIS_MCPO_CONTAINER_NAME:?Variable manquante: JARVIS_MCPO_CONTAINER_NAME}"
 fi
 
@@ -1316,7 +1333,7 @@ if false; then
   :
 fi
 
-if phase_enabled "all" || phase_enabled "deploy-web" || phase_enabled "deploy-scripts"; then
+if phase_enabled "all" || phase_enabled "deploy-web" || phase_enabled "deploy-scripts" || phase_enabled "restart"; then
   detect_ssh_auth_mode
 fi
 
