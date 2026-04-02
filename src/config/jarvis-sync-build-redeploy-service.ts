@@ -90,6 +90,11 @@ type ResolvedConfig = {
   scriptDirMode: string;
   scriptFileMode: string;
   webhookUrl: string;
+  portainerUrl: string;
+  portainerUser: string;
+  portainerPassword: string;
+  portainerEndpointId: string;
+  portainerStackId: string;
   mcpoContainerName: string;
   portainerUseStackWebhook: boolean;
   restartStrategy: "webhook" | "portainer-webhook" | "docker";
@@ -100,6 +105,16 @@ type ResolvedConfig = {
   sshKeyPath?: string;
   sshAuthMode: "sshpass" | "keyfile" | "agent_or_default_key";
 };
+
+function hasPortainerRedeployConfig(config: ResolvedConfig): boolean {
+  return [
+    config.portainerUrl,
+    config.portainerUser,
+    config.portainerPassword,
+    config.portainerEndpointId,
+    config.portainerStackId,
+  ].every((value) => value.trim().length > 0);
+}
 
 type ExecuteInput = {
   mode: typeof EXECUTION_MODES[number];
@@ -272,6 +287,9 @@ async function resolveConfig(envFile?: string): Promise<ResolvedConfig> {
   const sshHostPort = firstNonEmpty(mergedEnv, "JARVIS_srv_SSH") ?? "";
   const sshUser = firstNonEmpty(mergedEnv, "JARVIS_srv_USER") ?? "";
   const webhookUrl = firstNonEmpty(mergedEnv, "JARVIS_TOOLS_WEBHOOK_URL") ?? "";
+  const portainerUrl = firstNonEmpty(mergedEnv, "PORTAINER_URL", "jarvis_tools_PORTAINER_URL") ?? "";
+  const portainerUser = firstNonEmpty(mergedEnv, "PORTAINER_USER", "jarvis_tools_PORTAINER_USER") ?? "";
+  const portainerPassword = firstNonEmpty(mergedEnv, "PORTAINER_PASSWORD", "jarvis_tools_PORTAINER_PASSWORD") ?? "";
 
   const sshPassword = firstNonEmpty(mergedEnv, "JARVIS_srv_PSWD");
   const sshKeyPath = firstNonEmpty(mergedEnv, "JARVIS_SSH_KEY_PATH");
@@ -314,6 +332,11 @@ async function resolveConfig(envFile?: string): Promise<ResolvedConfig> {
     scriptDirMode: firstNonEmpty(mergedEnv, "SCRIPT_DIR_MODE") ?? "755",
     scriptFileMode: firstNonEmpty(mergedEnv, "SCRIPT_FILE_MODE") ?? "644",
     webhookUrl,
+    portainerUrl,
+    portainerUser,
+    portainerPassword,
+    portainerEndpointId: firstNonEmpty(mergedEnv, "PORTAINER_ENDPOINT_ID") ?? "3",
+    portainerStackId: firstNonEmpty(mergedEnv, "JARVIS_TOOLS_STACK_ID") ?? "42",
     mcpoContainerName: firstNonEmpty(mergedEnv, "JARVIS_MCPO_CONTAINER_NAME") ?? "jarvis_mcpo",
     portainerUseStackWebhook: parseBoolean(firstNonEmpty(mergedEnv, "PORTAINER_USE_STACK_WEBHOOK"), true),
     restartStrategy: (firstNonEmpty(mergedEnv, "RESTART_STRATEGY") ?? "docker") as ResolvedConfig["restartStrategy"],
@@ -373,6 +396,15 @@ function buildSshCommand(config: ResolvedConfig, remoteCommand: string): Command
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function normalizeBaseUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/g, "");
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed;
+  }
+
+  return `https://${trimmed}`;
 }
 
 function buildRsyncCommand(
@@ -582,7 +614,9 @@ export class JarvisSyncBuildRedeployService {
         requireConfigValue(config.giteaRepoUrl, "GITEA_REPO_URL");
       }
       if (input.service === "all" || input.service === "webhook") {
-        requireConfigValue(config.webhookUrl, "JARVIS_TOOLS_WEBHOOK_URL");
+        if (!hasPortainerRedeployConfig(config)) {
+          requireConfigValue(config.webhookUrl, "JARVIS_TOOLS_WEBHOOK_URL");
+        }
       }
       if ((input.service === "all" || input.service === "restart") && config.restartStrategy === "docker") {
         requireConfigValue(config.mcpoContainerName, "JARVIS_MCPO_CONTAINER_NAME");
@@ -787,6 +821,54 @@ export class JarvisSyncBuildRedeployService {
 
       if (step === "webhook") {
         await runStep("webhook", async () => {
+          if (hasPortainerRedeployConfig(config)) {
+            const baseUrl = normalizeBaseUrl(config.portainerUrl);
+            trace.push(`POST ${baseUrl}/api/auth`);
+            trace.push(`PUT ${baseUrl}/api/stacks/${config.portainerStackId}/git/redeploy?endpointId=${config.portainerEndpointId}`);
+            if (input.dry_run) {
+              return "Redeploiement Portainer simule";
+            }
+
+            const authResponse = await this.fetchRunner(`${baseUrl}/api/auth`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                Username: config.portainerUser,
+                Password: config.portainerPassword,
+              }),
+            });
+
+            if (!authResponse.ok) {
+              throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", `Portainer auth failed with HTTP ${String(authResponse.status)}`);
+            }
+
+            const authPayload = await authResponse.json() as { jwt?: string };
+            if (typeof authPayload.jwt !== "string" || authPayload.jwt.trim().length === 0) {
+              throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", "Portainer auth response did not contain a JWT token");
+            }
+
+            const redeployResponse = await this.fetchRunner(
+              `${baseUrl}/api/stacks/${config.portainerStackId}/git/redeploy?endpointId=${config.portainerEndpointId}`,
+              {
+                method: "PUT",
+                headers: {
+                  Authorization: `Bearer ${authPayload.jwt}`,
+                },
+              },
+            );
+
+            if (![200, 204].includes(redeployResponse.status)) {
+              throw new ScriptRunnerError(
+                "SCRIPT_EXECUTION_FAILED",
+                `Portainer stack redeploy failed with HTTP ${String(redeployResponse.status)}`,
+              );
+            }
+
+            return "Redeploiement stack Portainer OK";
+          }
+
           requireConfigValue(config.webhookUrl, "JARVIS_TOOLS_WEBHOOK_URL");
           if (!config.portainerUseStackWebhook) {
             throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", "PORTAINER_USE_STACK_WEBHOOK must be enabled");
