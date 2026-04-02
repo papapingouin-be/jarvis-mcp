@@ -5,13 +5,18 @@ import { ScriptRunnerService } from "../services/script-runner.js";
 import { asScriptRunnerError } from "../services/errors.js";
 import { scriptParamValueSchema } from "../types/schemas.js";
 
+const keyValueParamSchema = z.object({
+  key: z.string().min(1).max(255).describe("Parameter name."),
+  value: scriptParamValueSchema.describe("Parameter value."),
+});
+
 const runInputSchema = {
   script_name: z.string().min(1).max(255),
   phase: z.enum(["collect", "execute"]),
   confirmed: z.boolean().optional(),
   verbose: z.boolean().optional().default(true),
-  mode: z.enum(["sync", "async"]).optional().default("sync"),
-  params: z.record(z.string(), scriptParamValueSchema).optional(),
+  mode: z.enum(["sync", "async"]).optional().default("async"),
+  params_list: z.array(keyValueParamSchema).optional().describe("Optional script parameters as key/value pairs."),
 };
 
 const pollInputSchema = {
@@ -26,7 +31,10 @@ const describeInputSchema = {
 
 const saveScriptConfigInputSchema = {
   script_name: z.string().min(1).max(255),
-  values: z.record(z.string(), z.string().min(1)),
+  values_list: z.array(z.object({
+    key: z.string().min(1).max(255).describe("Environment variable name."),
+    value: z.string().min(1).describe("Environment variable value."),
+  })).min(1),
 };
 
 const service = new ScriptRunnerService();
@@ -56,19 +64,28 @@ function toErrorResponse(error: unknown): {
 }
 
 export function registerJarvisRunScriptTool(server: McpServer): void {
+  const toParamRecord = (entries?: Array<{ key: string; value: string | number | boolean }>): Record<string, string | number | boolean> | undefined => {
+    if (!Array.isArray(entries) || entries.length === 0) {
+      return undefined;
+    }
+
+    return Object.fromEntries(entries.map((entry) => [entry.key, entry.value]));
+  };
+
   server.tool(
     "jarvis_run_script",
-    "Run approved infrastructure scripts with collect/execute phases",
+    "Run an approved Jarvis infrastructure action. Use collect first to discover what a script can do. For long tasks, keep mode=async to get progress logs with jarvis_get_script_job.",
     runInputSchema,
     async (args) => {
       try {
+        const params = toParamRecord(args.params_list);
         if (args.mode === "async") {
           const started = await service.startAsyncJob({
             script_name: args.script_name,
             phase: args.phase,
             confirmed: args.confirmed,
             verbose: args.verbose,
-            params: args.params,
+            params,
           });
 
           return {
@@ -80,6 +97,8 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
                   mode: "async",
                   ...started,
                   poll_tool: "jarvis_get_script_job",
+                  next_poll_after_ms: 1500,
+                  message: "Script started. Poll jarvis_get_script_job to receive live logs before completion.",
                 }),
               },
             ],
@@ -91,7 +110,7 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
           phase: args.phase,
           confirmed: args.confirmed,
           verbose: args.verbose,
-          params: args.params,
+          params,
         });
 
         return {
@@ -110,7 +129,7 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
 
   server.tool(
     "jarvis_list_scripts",
-    "List approved scripts available to jarvis_run_script",
+    "List the approved Jarvis actions available for natural language requests.",
     {},
     async () => {
       try {
@@ -131,7 +150,7 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
 
   server.tool(
     "jarvis_describe_script",
-    "Describe one approved script, its required env vars and its purpose",
+    "Explain one Jarvis action, what it does, what parameters it accepts, and which environment variables it needs.",
     describeInputSchema,
     async (args) => {
       try {
@@ -152,7 +171,7 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
 
   server.tool(
     "jarvis_get_script_config",
-    "List the DB-backed configuration values required by an approved script",
+    "Show the saved configuration values required by one Jarvis action.",
     describeInputSchema,
     async (args) => {
       try {
@@ -173,11 +192,14 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
 
   server.tool(
     "jarvis_save_script_config",
-    "Save DB-backed configuration values for an approved script",
+    "Save configuration values for one Jarvis action using explicit key/value pairs.",
     saveScriptConfigInputSchema,
     async (args) => {
       try {
-        const payload = await saveScriptEnvValues(args.script_name, args.values);
+        const payload = await saveScriptEnvValues(
+          args.script_name,
+          Object.fromEntries(args.values_list.map((entry) => [entry.key, entry.value])),
+        );
         return {
           content: [
             {
@@ -194,7 +216,7 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
 
   server.tool(
     "jarvis_get_script_job",
-    "Poll async script job status and logs",
+    "Poll a running Jarvis action to get intermediate logs, status, and the final result.",
     pollInputSchema,
     async (args) => {
       try {

@@ -57,11 +57,11 @@ function toResponse(payload: Record<string, unknown>): {
 const jarvisSyncBuildRedeployModule: RegisterableModule = {
   type: "tool",
   name: "jarvis_sync_build_redeploy",
-  description: "Run or document the Jarvis sync/build/redeploy workflow without relying on shell helper scripts.",
+  description: "Redeploy Jarvis MCP updates in natural steps: sync code, build, deploy assets, redeploy the Portainer stack, and restart MCPO.",
   register(server: McpServer) {
     server.tool(
       "jarvis_sync_build_redeploy",
-      "Run or document the Jarvis sync/build/redeploy workflow without relying on shell helper scripts.",
+      "Redeploy Jarvis MCP updates in natural steps: sync code, build, deploy assets, redeploy the Portainer stack, and restart MCPO.",
       {
         phase: phaseSchema.optional().default("collect").describe("MCP phase: collect or execute."),
         mode: modeSchema.optional().default("self-doc").describe("Metadata mode or workflow mode."),

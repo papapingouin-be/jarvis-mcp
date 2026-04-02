@@ -122,7 +122,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
         description: "Optional SSH password used when sshpass authentication is preferred.",
       },
     ],
-    description: "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.",
+    description: "Synchronize source, build locally, deploy web code and scripts, mirror refs, redeploy the Portainer stack or trigger a webhook, and restart MCPO.",
   },
 };
 
