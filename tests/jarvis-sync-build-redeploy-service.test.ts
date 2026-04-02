@@ -101,4 +101,34 @@ describe("jarvis sync build redeploy service", () => {
       assert.strictEqual(commands.length, 0);
     });
   });
+
+  it("prefers Portainer API redeploy when Portainer credentials are available", async () => {
+    const service = new JarvisSyncBuildRedeployService(
+      async () => ({ stdout: "", stderr: "" }),
+      async () => new Response("", { status: 204 }),
+    );
+
+    await withEnv({
+      jarvis_tools_GITHUB_TOKEN: "gh-token",
+      jarvis_tools_GITEA_TOKEN: "gitea-token",
+      JARVIS_LOCAL_REPO: "/tmp/jarvis-mcp",
+      JARVIS_srv_SSH: "jarvis.example.org:22",
+      JARVIS_srv_USER: "deploy",
+      jarvis_tools_PORTAINER_URL: "192.168.11.206:9443",
+      jarvis_tools_PORTAINER_USER: "jarvisadmin",
+      jarvis_tools_PORTAINER_PASSWORD: "secret",
+      PORTAINER_ENDPOINT_ID: "3",
+      JARVIS_TOOLS_STACK_ID: "42",
+    }, async () => {
+      const payload = await service.execute({
+        mode: "webhook",
+        confirmed: false,
+        dry_run: true,
+      });
+
+      assert.strictEqual(payload.ok, true);
+      assert(payload.trace.some((line) => line.includes("/api/auth")));
+      assert(payload.trace.some((line) => line.includes("/api/stacks/42/git/redeploy?endpointId=3")));
+    });
+  });
 });

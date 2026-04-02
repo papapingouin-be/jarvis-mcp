@@ -3,15 +3,15 @@ set -Eeuo pipefail
 
 ########################################
 # jarvis_sync_build_redeploy.sh
-# Repo script version: 1.3.6
+# Repo script version: 1.3.7
 # Role: canonical implementation used by registry/config-web/runtime
 # Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
 #
-# Workflow version: Jarvis V5.4
+# Workflow version: Jarvis V5.5
 # Sync GitHub -> Build local -> Deploy web code -> Deploy scripts
 # -> Mirror Gitea -> Portainer webhook -> Restart MCPO
 #
-# Improvements over V5.3:
+# Improvements over V5.4:
 # - deploy tools/scripts to a shared runtime scripts directory
 # - verify/fix remote permissions
 # - secret-safe logs
@@ -225,7 +225,7 @@ service_optional_params() {
 service_required_env() {
   case "$1" in
     all)
-      printf '%s\n' JARVIS_LOCAL_REPO JARVIS_TOOLS_WEBHOOK_URL JARVIS_srv_SSH JARVIS_srv_USER
+      printf '%s\n' JARVIS_LOCAL_REPO JARVIS_srv_SSH JARVIS_srv_USER
       ;;
     sync|install|build)
       printf '%s\n' JARVIS_LOCAL_REPO
@@ -236,7 +236,6 @@ service_required_env() {
     mirror)
       ;;
     webhook|restart)
-      printf '%s\n' JARVIS_TOOLS_WEBHOOK_URL
       ;;
     self-doc|registry-doc|list-services|describe-service|validate-service-input)
       ;;
@@ -250,6 +249,9 @@ service_optional_env() {
   case "$1" in
     all|sync|mirror)
       printf '%s\n' jarvis_tools_GITHUB_TOKEN jarvis_tools_GITEA_TOKEN
+      ;;
+    webhook)
+      printf '%s\n' JARVIS_TOOLS_WEBHOOK_URL jarvis_tools_PORTAINER_URL jarvis_tools_PORTAINER_USER jarvis_tools_PORTAINER_PASSWORD PORTAINER_ENDPOINT_ID JARVIS_TOOLS_STACK_ID
       ;;
     restart)
       printf '%s\n' JARVIS_MCPO_CONTAINER_NAME
@@ -516,7 +518,7 @@ self_doc_json() {
     "script_name":"%s",
     "file_name":"%s",
     "description":"%s",
-    "version":"1.3.6",
+    "version":"1.3.7",
     "supports_registry":true,
     "required_env":[
       {"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},
@@ -549,7 +551,7 @@ self_doc_json() {
 registry_doc_json() {
   local file_name
   file_name="$(basename "${BASH_SOURCE[0]}")"
-  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.3.6","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
+  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.3.7","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"jarvis_tools_PORTAINER_URL","required":false,"secret":false,"description":"Portainer base URL used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_USER","required":false,"secret":false,"description":"Portainer username used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_PASSWORD","required":false,"secret":true,"description":"Portainer password used for direct stack redeploy."},{"name":"PORTAINER_ENDPOINT_ID","required":false,"secret":false,"description":"Portainer endpoint id for the jarvis-tools stack redeploy."},{"name":"JARVIS_TOOLS_STACK_ID","required":false,"secret":false,"description":"Portainer stack id for the jarvis-tools redeploy."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, trigger webhook, and restart MCPO.")" \
@@ -727,6 +729,23 @@ run_sensitive() {
 
 shell_quote() {
   printf "'%s'" "$(printf '%s' "${1:-}" | sed "s/'/'\\\\''/g")"
+}
+
+normalize_base_url() {
+  local value="${1:-}"
+  value="${value%/}"
+  case "$value" in
+    http://*|https://*)
+      printf '%s' "$value"
+      ;;
+    *)
+      printf 'https://%s' "$value"
+      ;;
+  esac
+}
+
+has_portainer_redeploy_config() {
+  [[ -n "${PORTAINER_URL:-}" && -n "${PORTAINER_USER:-}" && -n "${PORTAINER_PASSWORD:-}" && -n "${PORTAINER_ENDPOINT_ID:-}" && -n "${JARVIS_TOOLS_STACK_ID:-}" ]]
 }
 
 need_cmd() {
@@ -950,6 +969,11 @@ SCRIPT_DIR_MODE="${SCRIPT_DIR_MODE:-755}"
 SCRIPT_FILE_MODE="${SCRIPT_FILE_MODE:-644}"
 
 PORTAINER_USE_STACK_WEBHOOK="${PORTAINER_USE_STACK_WEBHOOK:-1}"
+PORTAINER_URL="${PORTAINER_URL:-${jarvis_tools_PORTAINER_URL:-}}"
+PORTAINER_USER="${PORTAINER_USER:-${jarvis_tools_PORTAINER_USER:-}}"
+PORTAINER_PASSWORD="${PORTAINER_PASSWORD:-${jarvis_tools_PORTAINER_PASSWORD:-}}"
+PORTAINER_ENDPOINT_ID="${PORTAINER_ENDPOINT_ID:-3}"
+JARVIS_TOOLS_STACK_ID="${JARVIS_TOOLS_STACK_ID:-42}"
 RESTART_STRATEGY="${RESTART_STRATEGY:-docker}"
 JARVIS_MCPO_CONTAINER_NAME="${JARVIS_MCPO_CONTAINER_NAME:-jarvis_mcpo}"
 
@@ -1256,6 +1280,58 @@ trigger_webhook() {
   info "Webhook Portainer déclenché"
 }
 
+redeploy_portainer_stack() {
+  local base_url auth_payload response auth_response http_code token
+  local auth_file redeploy_file
+
+  base_url="$(normalize_base_url "$PORTAINER_URL")"
+  auth_file="$(mktemp)"
+  redeploy_file="$(mktemp)"
+
+  auth_payload="$(jq -cn --arg username "$PORTAINER_USER" --arg password "$PORTAINER_PASSWORD" '{Username:$username,Password:$password}')"
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    info "[DRY-RUN] POST $base_url/api/auth"
+    info "[DRY-RUN] PUT $base_url/api/stacks/$JARVIS_TOOLS_STACK_ID/git/redeploy?endpointId=$PORTAINER_ENDPOINT_ID"
+    rm -f "$auth_file" "$redeploy_file"
+    return 0
+  fi
+
+  auth_response="$(curl -ksS -o "$auth_file" -w "%{http_code}" \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    -d "$auth_payload" \
+    "$base_url/api/auth")"
+
+  if [[ "$auth_response" != "200" && "$auth_response" != "204" ]]; then
+    echo "[ERREUR] Auth Portainer en échec (HTTP $auth_response)" >&2
+    cat "$auth_file" >&2 || true
+    rm -f "$auth_file" "$redeploy_file"
+    die "Échec authentification Portainer" "$EXIT_WEBHOOK"
+  fi
+
+  token="$(jq -r '.jwt // empty' "$auth_file")"
+  if [[ -z "$token" ]]; then
+    rm -f "$auth_file" "$redeploy_file"
+    die "Réponse Portainer invalide: JWT manquant" "$EXIT_WEBHOOK"
+  fi
+
+  http_code="$(curl -ksS -o "$redeploy_file" -w "%{http_code}" \
+    -H "Authorization: Bearer $token" \
+    -X PUT \
+    "$base_url/api/stacks/$JARVIS_TOOLS_STACK_ID/git/redeploy?endpointId=$PORTAINER_ENDPOINT_ID")"
+
+  if [[ "$http_code" != "200" && "$http_code" != "204" ]]; then
+    echo "[ERREUR] Redeploy stack Portainer en échec (HTTP $http_code)" >&2
+    cat "$redeploy_file" >&2 || true
+    rm -f "$auth_file" "$redeploy_file"
+    die "Échec redeploy stack Portainer" "$EXIT_WEBHOOK"
+  fi
+
+  rm -f "$auth_file" "$redeploy_file"
+  info "Stack Portainer redéployée"
+}
+
 docker_restart_container() {
   local container_name="$1"
 
@@ -1364,11 +1440,13 @@ step_start "prechecks"
 require_env_for_selected_phases JARVIS_LOCAL_REPO "${JARVIS_LOCAL_REPO:-}" all sync install build deploy-web deploy-scripts
 require_env_for_selected_phases jarvis_tools_GITHUB_TOKEN "${jarvis_tools_GITHUB_TOKEN:-}" all sync mirror
 require_env_for_selected_phases jarvis_tools_GITEA_TOKEN "${jarvis_tools_GITEA_TOKEN:-}" all mirror
-require_env_for_selected_phases JARVIS_TOOLS_WEBHOOK_URL "${JARVIS_TOOLS_WEBHOOK_URL:-}" all webhook
 require_env_for_selected_phases JARVIS_srv_SSH "${JARVIS_srv_SSH:-}" all deploy-web deploy-scripts restart
 require_env_for_selected_phases JARVIS_srv_USER "${JARVIS_srv_USER:-}" all deploy-web deploy-scripts restart
 if [[ "$RESTART_STRATEGY" == "webhook" || "$RESTART_STRATEGY" == "portainer-webhook" ]]; then
   require_env_for_selected_phases JARVIS_TOOLS_WEBHOOK_URL "${JARVIS_TOOLS_WEBHOOK_URL:-}" all restart
+fi
+if ( phase_enabled "all" || phase_enabled "webhook" ) && ! has_portainer_redeploy_config; then
+  require_env_for_selected_phases JARVIS_TOOLS_WEBHOOK_URL "${JARVIS_TOOLS_WEBHOOK_URL:-}" all webhook
 fi
 
 need_cmd git
@@ -1558,12 +1636,17 @@ fi
 if phase_enabled "webhook"; then
   step_start "webhook"
 
-  if [[ "$PORTAINER_USE_STACK_WEBHOOK" != "1" ]]; then
-    die "Cette V5.4 attend PORTAINER_USE_STACK_WEBHOOK=1 pour le redeploy" "$EXIT_WEBHOOK"
-  fi
+  if has_portainer_redeploy_config; then
+    redeploy_portainer_stack
+    step_ok "Redeploy stack Portainer OK"
+  else
+    if [[ "$PORTAINER_USE_STACK_WEBHOOK" != "1" ]]; then
+      die "Cette V5.5 attend un redeploy Portainer configuré ou PORTAINER_USE_STACK_WEBHOOK=1" "$EXIT_WEBHOOK"
+    fi
 
-  trigger_webhook "$JARVIS_TOOLS_WEBHOOK_URL"
-  step_ok "Webhook Portainer OK"
+    trigger_webhook "$JARVIS_TOOLS_WEBHOOK_URL"
+    step_ok "Webhook Portainer OK"
+  fi
 fi
 
 ########################################

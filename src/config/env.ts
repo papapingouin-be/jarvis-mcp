@@ -35,7 +35,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "jarvis_sync_build_redeploy.sh": {
     name: "jarvis_sync_build_redeploy.sh",
     file_name: "jarvis_sync_build_redeploy.sh",
-    version: "1.3.6",
+    version: "1.3.7",
     required_env: [
       {
         name: "jarvis_tools_GITHUB_TOKEN",
@@ -60,6 +60,36 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
         required: false,
         secret: true,
         description: "Portainer webhook URL used for webhook or restart phases.",
+      },
+      {
+        name: "jarvis_tools_PORTAINER_URL",
+        required: false,
+        secret: false,
+        description: "Portainer base URL used for direct stack redeploy.",
+      },
+      {
+        name: "jarvis_tools_PORTAINER_USER",
+        required: false,
+        secret: false,
+        description: "Portainer username used for direct stack redeploy.",
+      },
+      {
+        name: "jarvis_tools_PORTAINER_PASSWORD",
+        required: false,
+        secret: true,
+        description: "Portainer password used for direct stack redeploy.",
+      },
+      {
+        name: "PORTAINER_ENDPOINT_ID",
+        required: false,
+        secret: false,
+        description: "Portainer endpoint id for the jarvis-tools stack redeploy.",
+      },
+      {
+        name: "JARVIS_TOOLS_STACK_ID",
+        required: false,
+        secret: false,
+        description: "Portainer stack id for the jarvis-tools redeploy.",
       },
       {
         name: "JARVIS_MCPO_CONTAINER_NAME",
@@ -101,6 +131,7 @@ const DEFAULT_SCRIPT_RUNNER_SENSITIVE_ENV_NAMES = [
   "NPM_SECRET",
   "jarvis_tools_GITHUB_TOKEN",
   "jarvis_tools_GITEA_TOKEN",
+  "jarvis_tools_PORTAINER_PASSWORD",
   "JARVIS_TOOLS_WEBHOOK_URL",
 ];
 
