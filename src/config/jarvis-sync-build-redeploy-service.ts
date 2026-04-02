@@ -94,7 +94,7 @@ type ResolvedConfig = {
   portainerUser: string;
   portainerPassword: string;
   portainerEndpointId: string;
-  portainerStackId: string;
+  portainerStackName: string;
   mcpoContainerName: string;
   portainerUseStackWebhook: boolean;
   restartStrategy: "webhook" | "portainer-webhook" | "docker";
@@ -112,7 +112,7 @@ function hasPortainerRedeployConfig(config: ResolvedConfig): boolean {
     config.portainerUser,
     config.portainerPassword,
     config.portainerEndpointId,
-    config.portainerStackId,
+    config.portainerStackName,
   ].every((value) => value.trim().length > 0);
 }
 
@@ -336,7 +336,7 @@ async function resolveConfig(envFile?: string): Promise<ResolvedConfig> {
     portainerUser,
     portainerPassword,
     portainerEndpointId: firstNonEmpty(mergedEnv, "PORTAINER_ENDPOINT_ID") ?? "3",
-    portainerStackId: firstNonEmpty(mergedEnv, "JARVIS_TOOLS_STACK_ID") ?? "42",
+    portainerStackName: firstNonEmpty(mergedEnv, "JARVIS_TOOLS_STACK_NAME") ?? "jarvis-tools",
     mcpoContainerName: firstNonEmpty(mergedEnv, "JARVIS_MCPO_CONTAINER_NAME") ?? "jarvis_mcpo",
     portainerUseStackWebhook: parseBoolean(firstNonEmpty(mergedEnv, "PORTAINER_USE_STACK_WEBHOOK"), true),
     restartStrategy: (firstNonEmpty(mergedEnv, "RESTART_STRATEGY") ?? "docker") as ResolvedConfig["restartStrategy"],
@@ -824,7 +824,8 @@ export class JarvisSyncBuildRedeployService {
           if (hasPortainerRedeployConfig(config)) {
             const baseUrl = normalizeBaseUrl(config.portainerUrl);
             trace.push(`POST ${baseUrl}/api/auth`);
-            trace.push(`PUT ${baseUrl}/api/stacks/${config.portainerStackId}/git/redeploy?endpointId=${config.portainerEndpointId}`);
+            trace.push(`GET ${baseUrl}/api/stacks?endpointId=${config.portainerEndpointId}`);
+            trace.push(`Resolve stack name ${config.portainerStackName}`);
             if (input.dry_run) {
               return "Redeploiement Portainer simule";
             }
@@ -849,8 +850,30 @@ export class JarvisSyncBuildRedeployService {
               throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", "Portainer auth response did not contain a JWT token");
             }
 
+            const stacksResponse = await this.fetchRunner(
+              `${baseUrl}/api/stacks?endpointId=${config.portainerEndpointId}`,
+              {
+                method: "GET",
+                headers: {
+                  Authorization: `Bearer ${authPayload.jwt}`,
+                },
+              },
+            );
+
+            if (!stacksResponse.ok) {
+              throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", `Portainer stack listing failed with HTTP ${String(stacksResponse.status)}`);
+            }
+
+            const stacksPayload = await stacksResponse.json() as Array<{ Id?: number; Name?: string }>;
+            const stack = stacksPayload.find((entry) => entry.Name === config.portainerStackName);
+            if (!stack || typeof stack.Id !== "number") {
+              throw new ScriptRunnerError("SCRIPT_EXECUTION_FAILED", `Portainer stack not found: ${config.portainerStackName}`);
+            }
+
+            trace.push(`Resolved stack ${config.portainerStackName} -> ${String(stack.Id)}`);
+
             const redeployResponse = await this.fetchRunner(
-              `${baseUrl}/api/stacks/${config.portainerStackId}/git/redeploy?endpointId=${config.portainerEndpointId}`,
+              `${baseUrl}/api/stacks/${String(stack.Id)}/git/redeploy?endpointId=${config.portainerEndpointId}`,
               {
                 method: "PUT",
                 headers: {

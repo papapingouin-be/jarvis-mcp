@@ -3,15 +3,15 @@ set -Eeuo pipefail
 
 ########################################
 # jarvis_sync_build_redeploy.sh
-# Repo script version: 1.3.8
+# Repo script version: 1.3.9
 # Role: canonical implementation used by registry/config-web/runtime
 # Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
 #
-# Workflow version: Jarvis V5.6
+# Workflow version: Jarvis V5.7
 # Sync GitHub -> Build local -> Deploy web code -> Deploy scripts
 # -> Mirror Gitea -> Portainer webhook -> Restart MCPO
 #
-# Improvements over V5.5:
+# Improvements over V5.6:
 # - deploy tools/scripts to a shared runtime scripts directory
 # - verify/fix remote permissions
 # - secret-safe logs
@@ -745,7 +745,7 @@ normalize_base_url() {
 }
 
 has_portainer_redeploy_config() {
-  [[ -n "${PORTAINER_URL:-}" && -n "${PORTAINER_USER:-}" && -n "${PORTAINER_PASSWORD:-}" && -n "${PORTAINER_ENDPOINT_ID:-}" && -n "${JARVIS_TOOLS_STACK_ID:-}" ]]
+  [[ -n "${PORTAINER_URL:-}" && -n "${PORTAINER_USER:-}" && -n "${PORTAINER_PASSWORD:-}" && -n "${PORTAINER_ENDPOINT_ID:-}" && -n "${JARVIS_TOOLS_STACK_NAME:-}" ]]
 }
 
 docker_remote_base_cmd() {
@@ -1030,7 +1030,7 @@ PORTAINER_URL="${PORTAINER_URL:-${jarvis_tools_PORTAINER_URL:-}}"
 PORTAINER_USER="${PORTAINER_USER:-${jarvis_tools_PORTAINER_USER:-}}"
 PORTAINER_PASSWORD="${PORTAINER_PASSWORD:-${jarvis_tools_PORTAINER_PASSWORD:-}}"
 PORTAINER_ENDPOINT_ID="${PORTAINER_ENDPOINT_ID:-3}"
-JARVIS_TOOLS_STACK_ID="${JARVIS_TOOLS_STACK_ID:-42}"
+JARVIS_TOOLS_STACK_NAME="${JARVIS_TOOLS_STACK_NAME:-jarvis-tools}"
 JARVIS_TOOLS_CONTAINER_NAME="${JARVIS_TOOLS_CONTAINER_NAME:-mcp-server-starter}"
 PORTAINER_REDEPLOY_WAIT_SECONDS="${PORTAINER_REDEPLOY_WAIT_SECONDS:-90}"
 RESTART_STRATEGY="${RESTART_STRATEGY:-docker}"

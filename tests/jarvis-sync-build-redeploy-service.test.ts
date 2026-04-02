@@ -118,7 +118,7 @@ describe("jarvis sync build redeploy service", () => {
       jarvis_tools_PORTAINER_USER: "jarvisadmin",
       jarvis_tools_PORTAINER_PASSWORD: "secret",
       PORTAINER_ENDPOINT_ID: "3",
-      JARVIS_TOOLS_STACK_ID: "42",
+      JARVIS_TOOLS_STACK_NAME: "jarvis-tools",
     }, async () => {
       const payload = await service.execute({
         mode: "webhook",
@@ -128,7 +128,8 @@ describe("jarvis sync build redeploy service", () => {
 
       assert.strictEqual(payload.ok, true);
       assert(payload.trace.some((line) => line.includes("/api/auth")));
-      assert(payload.trace.some((line) => line.includes("/api/stacks/42/git/redeploy?endpointId=3")));
+      assert(payload.trace.some((line) => line.includes("/api/stacks?endpointId=3")));
+      assert(payload.trace.some((line) => line.includes("Resolve stack name jarvis-tools")));
     });
   });
 });

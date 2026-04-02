@@ -35,7 +35,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "jarvis_sync_build_redeploy.sh": {
     name: "jarvis_sync_build_redeploy.sh",
     file_name: "jarvis_sync_build_redeploy.sh",
-    version: "1.3.8",
+    version: "1.3.9",
     required_env: [
       {
         name: "jarvis_tools_GITHUB_TOKEN",
@@ -86,10 +86,10 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
         description: "Portainer endpoint id for the jarvis-tools stack redeploy.",
       },
       {
-        name: "JARVIS_TOOLS_STACK_ID",
+        name: "JARVIS_TOOLS_STACK_NAME",
         required: false,
         secret: false,
-        description: "Portainer stack id for the jarvis-tools redeploy.",
+        description: "Portainer stack name for the jarvis-tools redeploy.",
       },
       {
         name: "JARVIS_TOOLS_CONTAINER_NAME",
