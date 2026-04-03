@@ -498,6 +498,25 @@ function required_env_names(array $definitions, bool $requiredOnly = true): arra
     return array_values(array_unique($names));
 }
 
+function script_explicit_fallback_env_names(string $scriptName): array
+{
+    if ($scriptName !== 'jarvis_sync_build_redeploy.sh') {
+        return [];
+    }
+
+    return [
+        'jarvis_tools_PORTAINER_URL',
+        'jarvis_tools_PORTAINER_USER',
+        'jarvis_tools_PORTAINER_PASSWORD',
+        'PORTAINER_ENDPOINT_ID',
+        'JARVIS_TOOLS_STACK_NAME',
+        'JARVIS_TOOLS_CONTAINER_NAME',
+        'PORTAINER_REDEPLOY_WAIT_SECONDS',
+        'JARVIS_MCPO_CONTAINER_NAME',
+        'RESTART_STRATEGY',
+    ];
+}
+
 function validate_params_json(string $json): array
 {
     if (trim($json) === '') {
@@ -1475,6 +1494,7 @@ function precheck(PDO $pdo, string $scriptName): array
     $requiredEnvDefinitions = required_env_definitions(json_decode((string) $row['required_env_json'], true));
     $requiredEnv = required_env_names($requiredEnvDefinitions, true);
     $allEnv = required_env_names($requiredEnvDefinitions, false);
+    $allEnv = array_values(array_unique(array_merge($allEnv, script_explicit_fallback_env_names($scriptName))));
 
     $scriptEnv = script_env_values($pdo, $scriptName);
     foreach ($allEnv as $envName) {
