@@ -1462,8 +1462,10 @@ redeploy_portainer_stack_by_name() {
   fi
 
   http_code="$(curl -ksS -o "$redeploy_file" -w "%{http_code}" \
+    -H 'Content-Type: application/json' \
     -H "Authorization: Bearer $token" \
     -X PUT \
+    -d '{}' \
     "$base_url/api/stacks/$resolved_stack_id/git/redeploy?endpointId=$PORTAINER_ENDPOINT_ID")"
 
   if [[ "$http_code" != "200" && "$http_code" != "204" ]]; then

@@ -877,8 +877,10 @@ export class JarvisSyncBuildRedeployService {
               {
                 method: "PUT",
                 headers: {
+                  "Content-Type": "application/json",
                   Authorization: `Bearer ${authPayload.jwt}`,
                 },
+                body: "{}",
               },
             );
 
