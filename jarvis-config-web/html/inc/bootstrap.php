@@ -1474,8 +1474,20 @@ function precheck(PDO $pdo, string $scriptName): array
 
     $requiredEnvDefinitions = required_env_definitions(json_decode((string) $row['required_env_json'], true));
     $requiredEnv = required_env_names($requiredEnvDefinitions, true);
+    $allEnv = required_env_names($requiredEnvDefinitions, false);
 
     $scriptEnv = script_env_values($pdo, $scriptName);
+    foreach ($allEnv as $envName) {
+        $name = (string) $envName;
+        if ($name === '' || (array_key_exists($name, $scriptEnv) && trim((string) $scriptEnv[$name]) !== '')) {
+            continue;
+        }
+
+        $fallback = runtime_config_value($pdo, $name, $name);
+        if ($fallback !== null && trim($fallback) !== '') {
+            $scriptEnv[$name] = $fallback;
+        }
+    }
     $missing = [];
 
     foreach ($requiredEnv as $envName) {
