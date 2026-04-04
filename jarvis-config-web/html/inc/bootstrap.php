@@ -13,7 +13,7 @@ function h(mixed $v): string
 
 function jarvis_ui_version(): string
 {
-    return 'V7.4';
+    return 'V7.5';
 }
 
 function jarvis_file_version(string $path): string

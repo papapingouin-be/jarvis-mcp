@@ -583,8 +583,8 @@ function bindScriptsTestForm() {
     const stderr = escapeHtml(job.stderr || "");
     const stdoutRawUrl = `api/scripts_test.php?action=job_log&job_id=${encodeURIComponent(job.job_id || "")}&stream=stdout`;
     const stderrRawUrl = `api/scripts_test.php?action=job_log&job_id=${encodeURIComponent(job.job_id || "")}&stream=stderr`;
-    const stdoutMeta = job.stdout_truncated ? `<p class="small">Sortie tronquee dans l'aperçu. <a href="${stdoutRawUrl}" target="_blank" rel="noopener">Voir stdout complet</a></p>` : `<p class="small"><a href="${stdoutRawUrl}" target="_blank" rel="noopener">Ouvrir stdout brut</a></p>`;
-    const stderrMeta = job.stderr_truncated ? `<p class="small">Sortie tronquee dans l'aperçu. <a href="${stderrRawUrl}" target="_blank" rel="noopener">Voir stderr complet</a></p>` : `<p class="small"><a href="${stderrRawUrl}" target="_blank" rel="noopener">Ouvrir stderr brut</a></p>`;
+    const stdoutMeta = job.stdout_truncated ? `<p class="small">Sortie tronquee dans l'aperçu. <a href="${stdoutRawUrl}" target="_blank" rel="noopener">Full log stdout</a></p>` : `<p class="small"><a href="${stdoutRawUrl}" target="_blank" rel="noopener">Full log stdout</a></p>`;
+    const stderrMeta = job.stderr_truncated ? `<p class="small">Sortie tronquee dans l'aperçu. <a href="${stderrRawUrl}" target="_blank" rel="noopener">Full log stderr</a></p>` : `<p class="small"><a href="${stderrRawUrl}" target="_blank" rel="noopener">Full log stderr</a></p>`;
     const exitCode = job.exit_code === null || job.exit_code === undefined ? "" : String(job.exit_code);
     const actions = status === "RUNNING"
       ? `<div class="actions">
