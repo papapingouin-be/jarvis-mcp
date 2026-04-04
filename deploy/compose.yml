@@ -23,6 +23,8 @@ services:
       jarvis_tools_PG_DB: "${jarvis_tools_PG_DB:-}"
       jarvis_tools_PG_USER: "${jarvis_tools_PG_USER:-}"
       jarvis_tools_PG_PASSWORD: "${jarvis_tools_PG_PASSWORD:-}"
+      JARVIS_PG_USER: "${jarvis_tools_PG_USER:-}"
+      JARVIS_PG_PASSWORD: "${jarvis_tools_PG_PASSWORD:-}"
       jarvis_tools_DATABASE_URL: "${jarvis_tools_DATABASE_URL:-}"
 
       NPM_URL: "${jarvis_tools_NPM_URL:-}"
@@ -44,6 +46,7 @@ services:
       jarvis_tools_GITEA_SSH_HOST: "${jarvis_tools_GITEA_SSH_HOST:-}"
       jarvis_tools_GITEA_SSH_PORT: "${jarvis_tools_GITEA_SSH_PORT:-}"
       jarvis_tools_GITHUB_TOKEN: "${jarvis_tools_GITHUB_TOKEN:-}"
+      GITHUB_TOKEN: "${jarvis_tools_GITHUB_TOKEN:-}"
       jarvis_tools_GITHUB_IDENTITY: "${jarvis_tools_GITHUB_IDENTITY:-}"
       jarvis_tools_GITHUB_URL: "${jarvis_tools_GITHUB_URL:-}"
       JARVIS_SCRIPT_RUNNER_SCRIPTS_ROOT: "${jarvis_tools_SCRIPT_RUNNER_SCRIPTS_ROOT:-/opt/jarvis/shared/scripts}"

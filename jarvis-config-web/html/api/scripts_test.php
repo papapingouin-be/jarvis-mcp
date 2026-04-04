@@ -207,6 +207,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') ===
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && (string) ($_GET['action'] ?? '') === 'job_log') {
+    try {
+        $jobId = trim((string) ($_GET['job_id'] ?? ''));
+        $stream = trim((string) ($_GET['stream'] ?? 'stderr'));
+
+        if ($jobId === '') {
+            throw new RuntimeException('job_id obligatoire.');
+        }
+
+        if (!in_array($stream, ['stdout', 'stderr'], true)) {
+            throw new RuntimeException('stream invalide.');
+        }
+
+        $jobPath = jarvis_script_job_path($jobId, $stream . '.log');
+        if (!is_file($jobPath)) {
+            throw new RuntimeException('Log introuvable.');
+        }
+
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Content-Disposition: inline; filename="' . $jobId . '-' . $stream . '.log"');
+        readfile($jobPath);
+    } catch (Throwable $e) {
+        http_response_code(400);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo $e->getMessage();
+    }
+
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_GET['action'] ?? '') === 'kill_job') {
     header('Content-Type: application/json; charset=utf-8');
 

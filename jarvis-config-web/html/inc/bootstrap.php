@@ -1623,6 +1623,11 @@ function jarvis_truncate_text(string $text, int $limit = 12000): string
     return substr($text, 0, $limit) . "\n...[truncated]";
 }
 
+function jarvis_is_truncated_text(string $text, int $limit = 12000): bool
+{
+    return strlen($text) > $limit;
+}
+
 function jarvis_start_script_job(string $command, array $scriptEnv, array $meta = []): array
 {
     jarvis_ensure_dir(jarvis_script_jobs_root());
@@ -1736,6 +1741,8 @@ function jarvis_get_script_job(string $jobId): array
         'exit_code' => $exitCode,
         'stdout' => jarvis_truncate_text(trim($stdout)),
         'stderr' => jarvis_truncate_text(trim($stderr)),
+        'stdout_truncated' => jarvis_is_truncated_text(trim($stdout)),
+        'stderr_truncated' => jarvis_is_truncated_text(trim($stderr)),
     ];
 }
 
