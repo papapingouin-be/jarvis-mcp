@@ -35,7 +35,7 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "jarvis_sync_build_redeploy.sh": {
     name: "jarvis_sync_build_redeploy.sh",
     file_name: "jarvis_sync_build_redeploy.sh",
-    version: "1.3.9",
+    version: "1.4.0",
     required_env: [
       {
         name: "jarvis_tools_GITHUB_TOKEN",
