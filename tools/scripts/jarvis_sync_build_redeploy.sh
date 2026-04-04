@@ -1473,14 +1473,17 @@ redeploy_portainer_stack_by_name() {
     "$base_url/api/stacks/$resolved_stack_id/git/redeploy?endpointId=$PORTAINER_ENDPOINT_ID")"
 
   if [[ "$http_code" != "200" && "$http_code" != "204" ]]; then
-    echo "[ERREUR] Redeploy stack Portainer en echec (HTTP $http_code)" >&2
-    cat "$redeploy_file" >&2 || true
     if portainer_redeploy_should_fallback "$http_code" "$redeploy_file"; then
+      warn "Portainer API redeploy failed on private Git stack (HTTP $http_code)"
+      warn "Portainer returned: $(tr '\n' ' ' < "$redeploy_file" | sed 's/[[:space:]]\+/ /g')"
       info "Fallback active: redeploy docker compose distant suite a l'erreur Portainer Git prive"
       rm -f "$auth_file" "$redeploy_file"
       redeploy_jarvis_tools_remote_compose
+      info "Fallback succeeded: remote docker compose redeploy termine"
       return 0
     fi
+    echo "[ERREUR] Redeploy stack Portainer en echec (HTTP $http_code)" >&2
+    cat "$redeploy_file" >&2 || true
     rm -f "$auth_file" "$redeploy_file"
     die "Echec redeploy stack Portainer" "$EXIT_WEBHOOK"
   fi
@@ -1515,8 +1518,9 @@ redeploy_jarvis_tools_remote_compose() {
 
   docker_cmd="$(docker_remote_base_cmd)"
   remote_cmd="set -e; $docker_cmd compose --env-file $env_file -f $compose_file -p $project_name up -d --build"
+  info "Fallback remote compose start"
   remote_exec_sensitive "fallback docker compose redeploy '$JARVIS_TOOLS_REMOTE_PROJECT_NAME'" "$remote_cmd"
-  info "Fallback docker compose execute"
+  info "Fallback remote compose done"
 }
 
 docker_restart_container_remote() {
