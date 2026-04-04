@@ -104,6 +104,30 @@ const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
         description: "Maximum wait time used to confirm the jarvis-tools container was really restarted.",
       },
       {
+        name: "PORTAINER_API_FALLBACK_TO_REMOTE_COMPOSE",
+        required: false,
+        secret: false,
+        description: "Enable SSH docker compose fallback when Portainer API hits the private Git redeploy bug.",
+      },
+      {
+        name: "JARVIS_TOOLS_REMOTE_COMPOSE_FILE",
+        required: false,
+        secret: false,
+        description: "Remote docker compose file used by the Portainer fallback redeploy.",
+      },
+      {
+        name: "JARVIS_TOOLS_REMOTE_ENV_FILE",
+        required: false,
+        secret: false,
+        description: "Remote env file passed to docker compose during the Portainer fallback redeploy.",
+      },
+      {
+        name: "JARVIS_TOOLS_REMOTE_PROJECT_NAME",
+        required: false,
+        secret: false,
+        description: "Remote docker compose project name used by the Portainer fallback redeploy.",
+      },
+      {
         name: "JARVIS_MCPO_CONTAINER_NAME",
         required: false,
         secret: false,

@@ -512,6 +512,10 @@ function script_explicit_fallback_env_names(string $scriptName): array
         'JARVIS_TOOLS_STACK_NAME',
         'JARVIS_TOOLS_CONTAINER_NAME',
         'PORTAINER_REDEPLOY_WAIT_SECONDS',
+        'PORTAINER_API_FALLBACK_TO_REMOTE_COMPOSE',
+        'JARVIS_TOOLS_REMOTE_COMPOSE_FILE',
+        'JARVIS_TOOLS_REMOTE_ENV_FILE',
+        'JARVIS_TOOLS_REMOTE_PROJECT_NAME',
         'JARVIS_MCPO_CONTAINER_NAME',
         'RESTART_STRATEGY',
     ];

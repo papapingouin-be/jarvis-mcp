@@ -1033,6 +1033,10 @@ PORTAINER_ENDPOINT_ID="${PORTAINER_ENDPOINT_ID:-3}"
 JARVIS_TOOLS_STACK_NAME="${JARVIS_TOOLS_STACK_NAME:-jarvis-tools}"
 JARVIS_TOOLS_CONTAINER_NAME="${JARVIS_TOOLS_CONTAINER_NAME:-mcp-server-starter}"
 PORTAINER_REDEPLOY_WAIT_SECONDS="${PORTAINER_REDEPLOY_WAIT_SECONDS:-90}"
+PORTAINER_API_FALLBACK_TO_REMOTE_COMPOSE="${PORTAINER_API_FALLBACK_TO_REMOTE_COMPOSE:-1}"
+JARVIS_TOOLS_REMOTE_COMPOSE_FILE="${JARVIS_TOOLS_REMOTE_COMPOSE_FILE:-/opt/jarvis/repos/jarvis-mcp-tools/deploy/compose.yml}"
+JARVIS_TOOLS_REMOTE_ENV_FILE="${JARVIS_TOOLS_REMOTE_ENV_FILE:-/opt/jarvis/mcp/jarvis_sync_build_redeploy.env}"
+JARVIS_TOOLS_REMOTE_PROJECT_NAME="${JARVIS_TOOLS_REMOTE_PROJECT_NAME:-jarvis-tools}"
 RESTART_STRATEGY="${RESTART_STRATEGY:-docker}"
 JARVIS_MCPO_CONTAINER_NAME="${JARVIS_MCPO_CONTAINER_NAME:-jarvis_mcpo}"
 
@@ -1471,12 +1475,48 @@ redeploy_portainer_stack_by_name() {
   if [[ "$http_code" != "200" && "$http_code" != "204" ]]; then
     echo "[ERREUR] Redeploy stack Portainer en echec (HTTP $http_code)" >&2
     cat "$redeploy_file" >&2 || true
+    if portainer_redeploy_should_fallback "$http_code" "$redeploy_file"; then
+      info "Fallback active: redeploy docker compose distant suite a l'erreur Portainer Git prive"
+      rm -f "$auth_file" "$redeploy_file"
+      redeploy_jarvis_tools_remote_compose
+      return 0
+    fi
     rm -f "$auth_file" "$redeploy_file"
     die "Echec redeploy stack Portainer" "$EXIT_WEBHOOK"
   fi
 
   rm -f "$auth_file" "$redeploy_file"
   info "Stack Portainer redeployee"
+}
+
+portainer_redeploy_should_fallback() {
+  local http_code="$1"
+  local response_file="$2"
+  [[ "${PORTAINER_API_FALLBACK_TO_REMOTE_COMPOSE:-0}" == "1" ]] || return 1
+  [[ "$http_code" == "500" ]] || return 1
+  [[ -f "$response_file" ]] || return 1
+  grep -Eiq 'Unable to clone git repository|authentication required|Unauthorized' "$response_file"
+}
+
+redeploy_jarvis_tools_remote_compose() {
+  local docker_cmd compose_file env_file project_name remote_cmd
+
+  compose_file="$(shell_quote "$JARVIS_TOOLS_REMOTE_COMPOSE_FILE")"
+  env_file="$(shell_quote "$JARVIS_TOOLS_REMOTE_ENV_FILE")"
+  project_name="$(shell_quote "$JARVIS_TOOLS_REMOTE_PROJECT_NAME")"
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    info "[DRY-RUN] fallback remote docker compose redeploy"
+    info "[DRY-RUN] compose file = $JARVIS_TOOLS_REMOTE_COMPOSE_FILE"
+    info "[DRY-RUN] env file     = $JARVIS_TOOLS_REMOTE_ENV_FILE"
+    info "[DRY-RUN] project      = $JARVIS_TOOLS_REMOTE_PROJECT_NAME"
+    return 0
+  fi
+
+  docker_cmd="$(docker_remote_base_cmd)"
+  remote_cmd="set -e; $docker_cmd compose --env-file $env_file -f $compose_file -p $project_name up -d --build"
+  remote_exec_sensitive "fallback docker compose redeploy '$JARVIS_TOOLS_REMOTE_PROJECT_NAME'" "$remote_cmd"
+  info "Fallback docker compose execute"
 }
 
 docker_restart_container_remote() {
@@ -1631,6 +1671,7 @@ else
 fi
 info "JARVIS_TOOLS_CONTAINER_NAME = $JARVIS_TOOLS_CONTAINER_NAME"
 info "PORTAINER_WAIT_SECONDS      = $PORTAINER_REDEPLOY_WAIT_SECONDS"
+info "PORTAINER_API_FALLBACK      = $PORTAINER_API_FALLBACK_TO_REMOTE_COMPOSE"
 info "RESTART_STRATEGY            = $RESTART_STRATEGY"
 info "NPM_INSTALL_CMD             = $NPM_INSTALL_CMD"
 info "NPM_BUILD_CMD               = $NPM_BUILD_CMD"
