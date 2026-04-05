@@ -1517,7 +1517,7 @@ redeploy_jarvis_tools_remote_compose() {
   fi
 
   docker_cmd="$(docker_remote_base_cmd)"
-  remote_cmd="set -e; $docker_cmd compose --env-file $env_file -f $compose_file -p $project_name up -d --build"
+  remote_cmd="set -e; $docker_cmd compose --env-file $env_file -f $compose_file -p $project_name up -d --build --force-recreate $JARVIS_TOOLS_CONTAINER_NAME"
   info "Fallback remote compose start"
   remote_exec_sensitive "fallback docker compose redeploy '$JARVIS_TOOLS_REMOTE_PROJECT_NAME'" "$remote_cmd"
   info "Fallback remote compose done"
