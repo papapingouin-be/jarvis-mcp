@@ -1,7 +1,7 @@
 {
   "name": "mcp-typescript-starter",
   "version": "1.0.4",
-  "description": "A minimalistic MCP server demonstrating tools, resources, and prompts",
+  "description": "Outil compagnon de developpement",
   "main": "index.js",
   "type": "module",
   "scripts": {

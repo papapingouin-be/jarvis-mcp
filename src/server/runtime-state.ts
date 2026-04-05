@@ -9,8 +9,8 @@ export type RuntimeState = {
 const state: RuntimeState = {
   transport: "stdio",
   tools: [],
-  serverName: "mcp-server-starter",
-  serverVersion: "1.0.3",
+  serverName: "Jarvis MCP",
+  serverVersion: "1.0.4",
   startedAt: Date.now(),
 };
 

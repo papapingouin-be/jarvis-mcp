@@ -21,8 +21,9 @@ type InputScriptEnvDefinition = string | {
   description?: string;
 };
 
-export const SERVER_NAME = "mcp-server-starter";
+export const SERVER_NAME = "Jarvis MCP";
 export const SERVER_VERSION = "1.0.4";
+export const SERVER_DESCRIPTION = "Outil compagnon de developpement";
 
 const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "proxmox-diagnose.sh": {
