@@ -3,11 +3,11 @@ set -Eeuo pipefail
 
 ########################################
 # jarvis_sync_build_redeploy.sh
-# Repo script version: 1.4.2
+# Repo script version: 1.4.3
 # Role: canonical implementation used by registry/config-web/runtime
 # Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
 #
-# Workflow version: Jarvis V5.10
+# Workflow version: Jarvis V5.11
 # Sync GitHub -> Build local -> Deploy web code -> Deploy scripts
 # -> Mirror Gitea -> Portainer webhook -> Restart MCPO
 #
@@ -58,6 +58,8 @@ CURRENT_STEP_STATUS="pending"
 CURRENT_STEP_INDEX=0
 TOTAL_STEPS=0
 STEP_SEQUENCE=()
+CURRENT_SUBSTEP_INDEX=0
+CURRENT_SUBSTEP_TOTAL=0
 
 EXIT_OK=0
 EXIT_ENV=10
@@ -521,7 +523,7 @@ self_doc_json() {
     "script_name":"%s",
     "file_name":"%s",
     "description":"%s",
-      "version":"1.4.2",
+      "version":"1.4.3",
     "supports_registry":true,
     "required_env":[
       {"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},
@@ -554,7 +556,7 @@ self_doc_json() {
 registry_doc_json() {
   local file_name
   file_name="$(basename "${BASH_SOURCE[0]}")"
-  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.4.2","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"jarvis_tools_PORTAINER_URL","required":false,"secret":false,"description":"Portainer base URL used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_USER","required":false,"secret":false,"description":"Portainer username used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_PASSWORD","required":false,"secret":true,"description":"Portainer password used for direct stack redeploy."},{"name":"PORTAINER_ENDPOINT_ID","required":false,"secret":false,"description":"Portainer endpoint id for the jarvis-tools stack redeploy."},{"name":"JARVIS_TOOLS_STACK_NAME","required":false,"secret":false,"description":"Portainer stack name for the jarvis-tools redeploy."},{"name":"JARVIS_TOOLS_CONTAINER_NAME","required":false,"secret":false,"description":"Container name expected to restart when the jarvis-tools stack is redeployed."},{"name":"PORTAINER_REDEPLOY_WAIT_SECONDS","required":false,"secret":false,"description":"Maximum wait time used to confirm the jarvis-tools container was really restarted."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
+  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.4.3","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"jarvis_tools_PORTAINER_URL","required":false,"secret":false,"description":"Portainer base URL used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_USER","required":false,"secret":false,"description":"Portainer username used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_PASSWORD","required":false,"secret":true,"description":"Portainer password used for direct stack redeploy."},{"name":"PORTAINER_ENDPOINT_ID","required":false,"secret":false,"description":"Portainer endpoint id for the jarvis-tools stack redeploy."},{"name":"JARVIS_TOOLS_STACK_NAME","required":false,"secret":false,"description":"Portainer stack name for the jarvis-tools redeploy."},{"name":"JARVIS_TOOLS_CONTAINER_NAME","required":false,"secret":false,"description":"Container name expected to restart when the jarvis-tools stack is redeployed."},{"name":"PORTAINER_REDEPLOY_WAIT_SECONDS","required":false,"secret":false,"description":"Maximum wait time used to confirm the jarvis-tools container was really restarted."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, redeploy the Portainer stack or trigger a webhook, and restart MCPO.")" \
@@ -882,12 +884,15 @@ run_internal_git_mirror() {
 
   trap cleanup_internal_git_mirror RETURN
 
+  substep_next "clone miroir github"
   run_sensitive \
     "git clone --mirror $(printf '%s\n' "$GITHUB_REPO_URL" | mask_url) ${mirror_dir}/repo.git" \
     git clone --mirror "$GITHUB_REPO_URL" "${mirror_dir}/repo.git"
 
+  substep_next "synchronisation origin"
   run git -C "${mirror_dir}/repo.git" fetch --prune origin
 
+  substep_next "push branches et tags"
   run_sensitive \
     "git -C ${mirror_dir}/repo.git push --prune $(printf '%s\n' "$GITEA_REPO_URL" | mask_url) +refs/heads/*:refs/heads/*" \
     git -C "${mirror_dir}/repo.git" push --prune "$GITEA_REPO_URL" +refs/heads/*:refs/heads/*
@@ -939,10 +944,60 @@ step_label() {
   fi
 }
 
+substep_total_for() {
+  case "$1" in
+    prechecks) printf '4' ;;
+    sync) printf '6' ;;
+    install) printf '2' ;;
+    build) printf '1' ;;
+    deploy-web) printf '2' ;;
+    deploy-scripts) printf '3' ;;
+    mirror) printf '5' ;;
+    webhook) printf '4' ;;
+    restart) printf '1' ;;
+    *) printf '0' ;;
+  esac
+}
+
+substep_label() {
+  if [[ "$CURRENT_SUBSTEP_TOTAL" -gt 0 ]]; then
+    printf '%s/%s' "$CURRENT_SUBSTEP_INDEX" "$CURRENT_SUBSTEP_TOTAL"
+  else
+    printf '-/-'
+  fi
+}
+
+announce_step_sequence() {
+  local idx=1
+  local items=()
+  local item
+  for item in "${STEP_SEQUENCE[@]}"; do
+    items+=("${idx}/${TOTAL_STEPS} ${item}")
+    idx=$((idx + 1))
+  done
+  info "SEQUENCE = ${items[*]}"
+}
+
+substep_next() {
+  local label="$1"
+  if [[ "$CURRENT_SUBSTEP_TOTAL" -le 0 ]]; then
+    info "$(step_label "$CURRENT_STEP_INDEX") | -/- | $label"
+    return 0
+  fi
+
+  if [[ "$CURRENT_SUBSTEP_INDEX" -lt "$CURRENT_SUBSTEP_TOTAL" ]]; then
+    CURRENT_SUBSTEP_INDEX=$((CURRENT_SUBSTEP_INDEX + 1))
+  fi
+
+  info "$(step_label "$CURRENT_STEP_INDEX") | $(substep_label) | $label"
+}
+
 step_start() {
   CURRENT_STEP="$1"
   CURRENT_STEP_STATUS="running"
   CURRENT_STEP_INDEX="$(resolve_step_index "$CURRENT_STEP")"
+  CURRENT_SUBSTEP_INDEX=0
+  CURRENT_SUBSTEP_TOTAL="$(substep_total_for "$CURRENT_STEP")"
   log "$(step_label "$CURRENT_STEP_INDEX") START: $CURRENT_STEP"
 }
 
@@ -1013,6 +1068,7 @@ trap 'on_error $LINENO' ERR
 
 configure_runtime_output_paths
 init_step_sequence
+announce_step_sequence
 
 if [[ "$LOG_TO_FILE" == "1" && -n "$LOG_FILE" ]]; then
   if [[ "$JSON_STDOUT" == "1" ]]; then
@@ -1337,12 +1393,14 @@ deploy_web_code() {
   local source_path
   source_path="${JARVIS_LOCAL_REPO%/}/${WEB_CODE_LOCAL_SUBDIR}"
 
+  substep_next "preparation du paquet web"
   info "Source locale web      = $source_path"
   info "Serveur distant        = ${JARVIS_srv_USER}@$(mask_host "$JARVIS_srv_SSH")"
   info "Destination web        = $WEB_REMOTE_PATH"
   info "Mode auth SSH          = $SSH_AUTH_MODE"
   info "Exclusions rsync web   = $WEB_RSYNC_EXCLUDES"
 
+  substep_next "copie rsync web"
   rsync_copy_dir "$source_path" "$WEB_REMOTE_PATH" "$WEB_REMOTE_DELETE" "$EXIT_DEPLOY_WEB" "$WEB_RSYNC_EXCLUDES"
 }
 
@@ -1350,12 +1408,15 @@ deploy_scripts_data() {
   local source_path
   source_path="${JARVIS_LOCAL_REPO%/}/${SCRIPT_SOURCE_LOCAL_SUBDIR}"
 
+  substep_next "preparation des scripts"
   info "Source locale scripts  = $source_path"
   info "Serveur distant        = ${JARVIS_srv_USER}@$(mask_host "$JARVIS_srv_SSH")"
   info "Destination scripts    = $SCRIPT_REMOTE_PATH"
   info "Mode auth SSH          = $SSH_AUTH_MODE"
 
+  substep_next "copie rsync scripts"
   rsync_copy_dir "$source_path" "$SCRIPT_REMOTE_PATH" "$SCRIPT_REMOTE_DELETE" "$EXIT_DEPLOY_SCRIPTS"
+  substep_next "verification des permissions"
   verify_remote_permissions "$SCRIPT_REMOTE_PATH" "$SCRIPT_DIR_MODE" "$SCRIPT_FILE_MODE"
 }
 
@@ -1644,6 +1705,7 @@ run_npm_install_phase() {
 ########################################
 
 step_start "prechecks"
+substep_next "validation de l'environnement"
 
 require_env_for_selected_phases JARVIS_LOCAL_REPO "${JARVIS_LOCAL_REPO:-}" all sync install build deploy-web deploy-scripts
 require_env_for_selected_phases jarvis_tools_GITHUB_TOKEN "${jarvis_tools_GITHUB_TOKEN:-}" all sync mirror
@@ -1663,6 +1725,7 @@ need_cmd curl
 need_cmd bash
 need_cmd python3
 need_cmd jq
+substep_next "validation des commandes"
 command_required_for_selected_phases ssh all deploy-web deploy-scripts restart
 command_required_for_selected_phases rsync all deploy-web deploy-scripts
 if [[ "$RESTART_STRATEGY" == "docker" ]]; then
@@ -1683,6 +1746,7 @@ fi
 if phase_enabled "all" || phase_enabled "deploy-web" || phase_enabled "deploy-scripts" || phase_enabled "restart" || phase_enabled "webhook"; then
   detect_ssh_auth_mode
 fi
+substep_next "detection du mode ssh"
 
 info "ENV_FILE                    = $ENV_FILE"
 info "ENV_SOURCE                  = $ENV_SOURCE"
@@ -1722,6 +1786,7 @@ info "NPM_INSTALL_CMD             = $NPM_INSTALL_CMD"
 info "NPM_BUILD_CMD               = $NPM_BUILD_CMD"
 info "NPM_ALLOW_FALLBACK_INSTALL  = $NPM_ALLOW_FALLBACK_INSTALL"
 info "STOP_ON_LOCK_MISMATCH       = $STOP_ON_LOCK_MISMATCH"
+substep_next "resume de configuration"
 
 step_ok "Pré-checks terminés"
 
@@ -1733,9 +1798,11 @@ if phase_enabled "sync"; then
   step_start "sync"
   cd "$JARVIS_LOCAL_REPO"
 
+  substep_next "inspection du depot local"
   run git -c safe.directory="$JARVIS_LOCAL_REPO" status --short || true
   print_git_remotes_masked
 
+  substep_next "configuration du remote github"
   if git -c safe.directory="$JARVIS_LOCAL_REPO" remote get-url "$GITHUB_REMOTE_NAME" >/dev/null 2>&1; then
     run_sensitive \
       "git remote set-url $GITHUB_REMOTE_NAME $(printf '%s\n' "$GITHUB_REPO_URL" | mask_url)" \
@@ -1752,6 +1819,7 @@ if phase_enabled "sync"; then
   LOCAL_COMMIT_BEFORE="$(git -c safe.directory="$JARVIS_LOCAL_REPO" rev-parse HEAD)"
   info "Commit local avant sync : $LOCAL_COMMIT_BEFORE"
 
+  substep_next "fetch github"
   run git -c safe.directory="$JARVIS_LOCAL_REPO" fetch --prune --prune-tags "$GITHUB_REMOTE_NAME" "+refs/heads/*:refs/remotes/$GITHUB_REMOTE_NAME/*" --tags
 
   git -c safe.directory="$JARVIS_LOCAL_REPO" rev-parse --verify "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH" >/dev/null 2>&1 \
@@ -1760,10 +1828,12 @@ if phase_enabled "sync"; then
   REMOTE_COMMIT="$(git -c safe.directory="$JARVIS_LOCAL_REPO" rev-parse "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH")"
   info "Commit GitHub visé       : $REMOTE_COMMIT"
 
+  substep_next "alignement sur la branche cible"
   run git -c safe.directory="$JARVIS_LOCAL_REPO" checkout -B "$JARVIS_BRANCH" "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH"
   run git -c safe.directory="$JARVIS_LOCAL_REPO" reset --hard "$GITHUB_REMOTE_NAME/$JARVIS_BRANCH"
   run git -c safe.directory="$JARVIS_LOCAL_REPO" clean -fd
 
+  substep_next "submodules et lfs"
   if [[ -f .gitmodules ]]; then
     run git -c safe.directory="$JARVIS_LOCAL_REPO" submodule sync --recursive
     run git -c safe.directory="$JARVIS_LOCAL_REPO" submodule update --init --recursive
@@ -1780,6 +1850,7 @@ if phase_enabled "sync"; then
   LOCAL_COMMIT_AFTER="$(git -c safe.directory="$JARVIS_LOCAL_REPO" rev-parse HEAD)"
   info "Commit local après sync : $LOCAL_COMMIT_AFTER"
 
+  substep_next "verification finale"
   run git -c safe.directory="$JARVIS_LOCAL_REPO" --no-pager log --oneline -n 3
   step_ok "Synchronisation GitHub -> local OK"
 fi
@@ -1791,10 +1862,12 @@ fi
 if phase_enabled "install"; then
   step_start "install"
   cd "$JARVIS_LOCAL_REPO"
+  substep_next "preparation npm"
 
   if [[ "$DRY_RUN" == "1" ]]; then
     info "[DRY-RUN] Installation npm simulée"
   else
+    substep_next "installation des dependances"
     run_npm_install_phase
   fi
 
@@ -1808,6 +1881,7 @@ fi
 if phase_enabled "build"; then
   step_start "build"
   cd "$JARVIS_LOCAL_REPO"
+  substep_next "build typescript"
   run_shell "$NPM_BUILD_CMD"
   step_ok "Build OK"
 fi
@@ -1841,10 +1915,12 @@ fi
 if phase_enabled "mirror"; then
   step_start "mirror"
 
+  substep_next "preparation du mirror"
   info "SRC_URL = $(printf '%s\n' "$GITHUB_REPO_URL" | mask_url)"
   info "DST_URL = $(printf '%s\n' "$GITEA_REPO_URL" | mask_url)"
 
   run_internal_git_mirror
+  substep_next "verification du mirror"
   step_ok "Mirror GitHub -> Gitea OK"
 fi
 
@@ -1854,19 +1930,26 @@ fi
 
 if phase_enabled "webhook"; then
   step_start "webhook"
+  substep_next "lecture du conteneur avant redeploy"
   TOOLS_CONTAINER_STARTED_AT_BEFORE="$(get_remote_container_started_at "$JARVIS_TOOLS_CONTAINER_NAME" | tr -d '\r' | tail -n 1)"
 
   if has_portainer_redeploy_config; then
+    substep_next "tentative redeploy portainer"
     redeploy_portainer_stack_by_name
+    substep_next "verification du redeploy"
     wait_for_remote_container_redeploy "$JARVIS_TOOLS_CONTAINER_NAME" "$TOOLS_CONTAINER_STARTED_AT_BEFORE" "$PORTAINER_REDEPLOY_WAIT_SECONDS"
+    substep_next "redeploy confirme"
     step_ok "Redeploy stack Portainer OK"
   else
     if [[ "$PORTAINER_USE_STACK_WEBHOOK" != "1" ]]; then
       die "Cette V5.6 attend un redeploy Portainer configuré ou PORTAINER_USE_STACK_WEBHOOK=1" "$EXIT_WEBHOOK"
     fi
 
+    substep_next "declenchement du webhook"
     trigger_webhook "$JARVIS_TOOLS_WEBHOOK_URL"
+    substep_next "verification du redeploy"
     wait_for_remote_container_redeploy "$JARVIS_TOOLS_CONTAINER_NAME" "$TOOLS_CONTAINER_STARTED_AT_BEFORE" "$PORTAINER_REDEPLOY_WAIT_SECONDS"
+    substep_next "redeploy confirme"
     step_ok "Webhook Portainer OK"
   fi
 fi
@@ -1877,6 +1960,7 @@ fi
 
 if phase_enabled "restart"; then
   step_start "restart"
+  substep_next "redemarrage mcpo"
   restart_runtime
   step_ok "Redémarrage MCPO OK"
 fi
