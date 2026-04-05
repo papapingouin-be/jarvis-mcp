@@ -579,6 +579,7 @@ function bindScriptsTestForm() {
   const renderScriptJobStatus = (job = {}) => {
     const status = String(job.status || "unknown").toUpperCase();
     const statusClass = status === "COMPLETED" ? "up" : status === "FAILED" || status === "KILLED" ? "down" : "warn";
+    const progress = job.progress && typeof job.progress === "object" ? job.progress : null;
     const stdout = escapeHtml(job.stdout || "");
     const stderr = escapeHtml(job.stderr || "");
     const stdoutRawUrl = `api/scripts_test.php?action=job_log&job_id=${encodeURIComponent(job.job_id || "")}&stream=stdout`;
@@ -586,6 +587,9 @@ function bindScriptsTestForm() {
     const stdoutMeta = job.stdout_truncated ? `<p class="small">Sortie tronquee dans l'aperçu. <a href="${stdoutRawUrl}" target="_blank" rel="noopener">Full log stdout</a></p>` : `<p class="small"><a href="${stdoutRawUrl}" target="_blank" rel="noopener">Full log stdout</a></p>`;
     const stderrMeta = job.stderr_truncated ? `<p class="small">Sortie tronquee dans l'aperçu. <a href="${stderrRawUrl}" target="_blank" rel="noopener">Full log stderr</a></p>` : `<p class="small"><a href="${stderrRawUrl}" target="_blank" rel="noopener">Full log stderr</a></p>`;
     const exitCode = job.exit_code === null || job.exit_code === undefined ? "" : String(job.exit_code);
+    const progressHtml = progress
+      ? `<p><strong>Progression</strong> : <code>${escapeHtml(String(progress.current || ""))}/${escapeHtml(String(progress.total || ""))}</code> (${escapeHtml(String(progress.percent || 0))}%)${progress.label ? ` - <code>${escapeHtml(progress.label)}</code>` : ""}</p>`
+      : "";
     const actions = status === "RUNNING"
       ? `<div class="actions">
           <button class="secondary-btn" type="button" data-script-job-refresh="${escapeHtml(job.job_id || "")}">Rafraichir</button>
@@ -602,6 +606,7 @@ function bindScriptsTestForm() {
       <p><strong>Phase</strong> : <code>${escapeHtml(job.phase || "")}</code></p>
       <p><strong>Service</strong> : <code>${escapeHtml(job.service_name || "")}</code></p>
       <p><strong>Exit code</strong> : <code>${escapeHtml(exitCode)}</code></p>
+      ${progressHtml}
       ${actions}
       <h4>stdout</h4>
       ${stdoutMeta}

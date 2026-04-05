@@ -57,6 +57,15 @@ type ScriptJobRecord = {
   };
 };
 
+type ScriptJobProgress = {
+  current: number;
+  total: number;
+  percent: number;
+  label: string | null;
+  state: "running" | "ok" | "failed" | "unknown";
+  line: string;
+};
+
 function toExecResult(stdout: string | Buffer, stderr: string | Buffer): ExecResult {
   return {
     stdout: typeof stdout === "string" ? stdout : stdout.toString("utf8"),
@@ -163,6 +172,47 @@ function buildResultWithTrace(
     trace: buildTraceLines(stderr, sensitiveEnvNames, env),
     live_logs_supported: true,
   };
+}
+
+function extractProgressFromLogs(logs: Array<string>): ScriptJobProgress | null {
+  const progressPattern = /STEP\s+(\d+)\/(\d+)\s+(START|OK|FAIL):\s*(.+)$/i;
+
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const line = logs[index] ?? "";
+    const match = line.match(progressPattern);
+    if (!match) {
+      continue;
+    }
+
+    const current = Number.parseInt(match[1] ?? "", 10);
+    const total = Number.parseInt(match[2] ?? "", 10);
+    if (!Number.isFinite(current) || !Number.isFinite(total) || current <= 0 || total <= 0) {
+      continue;
+    }
+
+    const rawState = (match[3] ?? "").toUpperCase();
+    const label = (match[4] ?? "").trim() || null;
+    const percent = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
+    const state =
+      rawState === "START"
+        ? "running"
+        : rawState === "OK"
+          ? "ok"
+          : rawState === "FAIL"
+            ? "failed"
+            : "unknown";
+
+    return {
+      current,
+      total,
+      percent,
+      label,
+      state,
+      line,
+    };
+  }
+
+  return null;
 }
 
 function toScriptExecutionError(
@@ -497,6 +547,7 @@ export class ScriptRunnerService {
         started_at: job.started_at,
         ended_at: job.ended_at,
         logs,
+        progress: extractProgressFromLogs(job.logs),
         next_offset: offset + logs.length,
         completed: job.status !== "running",
         result: job.result ?? null,

@@ -74,7 +74,7 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
 
   server.tool(
     "jarvis_run_script",
-    "Run an approved Jarvis infrastructure action. Use collect first to discover what a script can do. For long tasks, keep mode=async to get progress logs with jarvis_get_script_job.",
+    "Run an approved Jarvis infrastructure action. Use collect first to discover what a script can do. For long tasks, keep mode=async to get numbered progress steps and live logs with jarvis_get_script_job.",
     runInputSchema,
     async (args) => {
       try {
@@ -98,7 +98,7 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
                   ...started,
                   poll_tool: "jarvis_get_script_job",
                   next_poll_after_ms: 1500,
-                  message: "Script started. Poll jarvis_get_script_job to receive live logs before completion.",
+                  message: "Script started. Poll jarvis_get_script_job to receive numbered progress steps and live logs before completion.",
                 }),
               },
             ],
@@ -216,7 +216,7 @@ export function registerJarvisRunScriptTool(server: McpServer): void {
 
   server.tool(
     "jarvis_get_script_job",
-    "Poll a running Jarvis action to get intermediate logs, status, and the final result.",
+    "Poll a running Jarvis action to get intermediate logs, numbered progress, status, and the final result.",
     pollInputSchema,
     async (args) => {
       try {

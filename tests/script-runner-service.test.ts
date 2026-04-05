@@ -255,11 +255,92 @@ describe("script runner service", () => {
         completed?: boolean;
         logs?: Array<string>;
         result?: Record<string, unknown> | null;
+        progress?: {
+          current?: number;
+          total?: number;
+          label?: string | null;
+          percent?: number;
+          state?: string;
+        } | null;
       };
       assert.strictEqual(job.status, "completed");
       assert.strictEqual(job.completed, true);
       assert.deepStrictEqual(job.logs, ["collecting"]);
       assert.strictEqual((job.result ?? {}).summary, "ok");
+      assert.strictEqual(job.progress?.current, undefined);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("extracts numbered progress from async job logs", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "script-runner-"));
+
+    try {
+      const fileName = "approved.sh";
+      await writeFile(path.join(tempDir, fileName), "#!/usr/bin/env bash\necho '{}'\n", "utf8");
+
+      const registry = new ApprovedScriptRegistry({
+        "approved.sh": {
+          name: "approved.sh",
+          file_name: fileName,
+          required_env: [],
+        },
+      });
+
+      const service = new ScriptRunnerService({
+        scriptsRoot: tempDir,
+        registry,
+        spawnRunner: () => {
+          const proc = new EventEmitter() as EventEmitter & {
+            stdout: PassThrough;
+            stderr: PassThrough;
+            kill: () => boolean;
+          };
+          proc.stdout = new PassThrough();
+          proc.stderr = new PassThrough();
+          proc.kill = () => true;
+
+          setTimeout(() => {
+            proc.stderr.write("[INFO] STEP 2/5 START: build\n");
+            proc.stdout.write('{"summary":"ok","status":"done"}');
+            proc.stdout.end();
+            proc.stderr.end();
+            proc.emit("close", 0);
+          }, 10);
+
+          return proc as unknown as import("node:child_process").ChildProcess;
+        },
+      });
+
+      const started = await service.startAsyncJob({
+        script_name: "approved.sh",
+        phase: "collect",
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      const poll = service.getAsyncJob({
+        job_id: started.job_id,
+        offset: 0,
+        limit: 50,
+      });
+
+      const job = poll.job as {
+        progress?: {
+          current?: number;
+          total?: number;
+          label?: string | null;
+          percent?: number;
+          state?: string;
+        } | null;
+      };
+
+      assert.strictEqual(job.progress?.current, 2);
+      assert.strictEqual(job.progress?.total, 5);
+      assert.strictEqual(job.progress?.label, "build");
+      assert.strictEqual(job.progress?.percent, 40);
+      assert.strictEqual(job.progress?.state, "running");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

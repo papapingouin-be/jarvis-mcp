@@ -13,7 +13,7 @@ function h(mixed $v): string
 
 function jarvis_ui_version(): string
 {
-    return 'V7.5';
+    return 'V7.6';
 }
 
 function jarvis_file_version(string $path): string
@@ -1747,7 +1747,47 @@ function jarvis_get_script_job(string $jobId): array
         'stderr' => jarvis_truncate_text(trim($stderr)),
         'stdout_truncated' => jarvis_is_truncated_text(trim($stdout)),
         'stderr_truncated' => jarvis_is_truncated_text(trim($stderr)),
+        'progress' => jarvis_extract_progress_from_text($stderr),
     ];
+}
+
+function jarvis_extract_progress_from_text(string $text): ?array
+{
+    $lines = preg_split('/\r\n|\r|\n/', $text) ?: [];
+    for ($i = count($lines) - 1; $i >= 0; $i--) {
+        $line = trim((string) $lines[$i]);
+        if ($line === '') {
+            continue;
+        }
+
+        if (!preg_match('/STEP\s+(\d+)\/(\d+)\s+(START|OK|FAIL):\s*(.+)$/i', $line, $matches)) {
+            continue;
+        }
+
+        $current = (int) ($matches[1] ?? 0);
+        $total = (int) ($matches[2] ?? 0);
+        if ($current <= 0 || $total <= 0) {
+            continue;
+        }
+
+        $state = strtolower((string) ($matches[3] ?? 'unknown'));
+        if ($state === 'start') {
+            $state = 'running';
+        } elseif ($state === 'fail') {
+            $state = 'failed';
+        }
+
+        return [
+            'current' => $current,
+            'total' => $total,
+            'percent' => max(0, min(100, (int) round(($current / $total) * 100))),
+            'label' => trim((string) ($matches[4] ?? '')) ?: null,
+            'state' => $state,
+            'line' => $line,
+        ];
+    }
+
+    return null;
 }
 
 function jarvis_kill_script_job(string $jobId): array

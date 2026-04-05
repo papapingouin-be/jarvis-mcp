@@ -3,11 +3,11 @@ set -Eeuo pipefail
 
 ########################################
 # jarvis_sync_build_redeploy.sh
-# Repo script version: 1.4.1
+# Repo script version: 1.4.2
 # Role: canonical implementation used by registry/config-web/runtime
 # Legacy wrapper path kept for compatibility: tools/jarvis_sync_build_redeploy.sh
 #
-# Workflow version: Jarvis V5.9
+# Workflow version: Jarvis V5.10
 # Sync GitHub -> Build local -> Deploy web code -> Deploy scripts
 # -> Mirror Gitea -> Portainer webhook -> Restart MCPO
 #
@@ -55,6 +55,9 @@ exec 3>&1
 
 CURRENT_STEP=""
 CURRENT_STEP_STATUS="pending"
+CURRENT_STEP_INDEX=0
+TOTAL_STEPS=0
+STEP_SEQUENCE=()
 
 EXIT_OK=0
 EXIT_ENV=10
@@ -518,7 +521,7 @@ self_doc_json() {
     "script_name":"%s",
     "file_name":"%s",
     "description":"%s",
-"version":"1.4.1",
+      "version":"1.4.2",
     "supports_registry":true,
     "required_env":[
       {"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},
@@ -551,7 +554,7 @@ self_doc_json() {
 registry_doc_json() {
   local file_name
   file_name="$(basename "${BASH_SOURCE[0]}")"
-  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.4.1","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"jarvis_tools_PORTAINER_URL","required":false,"secret":false,"description":"Portainer base URL used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_USER","required":false,"secret":false,"description":"Portainer username used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_PASSWORD","required":false,"secret":true,"description":"Portainer password used for direct stack redeploy."},{"name":"PORTAINER_ENDPOINT_ID","required":false,"secret":false,"description":"Portainer endpoint id for the jarvis-tools stack redeploy."},{"name":"JARVIS_TOOLS_STACK_NAME","required":false,"secret":false,"description":"Portainer stack name for the jarvis-tools redeploy."},{"name":"JARVIS_TOOLS_CONTAINER_NAME","required":false,"secret":false,"description":"Container name expected to restart when the jarvis-tools stack is redeployed."},{"name":"PORTAINER_REDEPLOY_WAIT_SECONDS","required":false,"secret":false,"description":"Maximum wait time used to confirm the jarvis-tools container was really restarted."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
+  emit_mcp_json "$(printf '{"ok":true,"mode":"registry-doc","script":{"script_name":"%s","file_name":"%s","description":"%s","version":"1.4.2","required_env":[{"name":"jarvis_tools_GITHUB_TOKEN","required":false,"secret":true,"description":"GitHub token used for sync and mirror."},{"name":"jarvis_tools_GITEA_TOKEN","required":false,"secret":true,"description":"Gitea token used for mirror."},{"name":"JARVIS_LOCAL_REPO","required":false,"secret":false,"description":"Local repository path."},{"name":"JARVIS_TOOLS_WEBHOOK_URL","required":false,"secret":true,"description":"Portainer webhook URL."},{"name":"jarvis_tools_PORTAINER_URL","required":false,"secret":false,"description":"Portainer base URL used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_USER","required":false,"secret":false,"description":"Portainer username used for direct stack redeploy."},{"name":"jarvis_tools_PORTAINER_PASSWORD","required":false,"secret":true,"description":"Portainer password used for direct stack redeploy."},{"name":"PORTAINER_ENDPOINT_ID","required":false,"secret":false,"description":"Portainer endpoint id for the jarvis-tools stack redeploy."},{"name":"JARVIS_TOOLS_STACK_NAME","required":false,"secret":false,"description":"Portainer stack name for the jarvis-tools redeploy."},{"name":"JARVIS_TOOLS_CONTAINER_NAME","required":false,"secret":false,"description":"Container name expected to restart when the jarvis-tools stack is redeployed."},{"name":"PORTAINER_REDEPLOY_WAIT_SECONDS","required":false,"secret":false,"description":"Maximum wait time used to confirm the jarvis-tools container was really restarted."},{"name":"JARVIS_MCPO_CONTAINER_NAME","required":false,"secret":false,"description":"MCPO container name."},{"name":"JARVIS_srv_SSH","required":false,"secret":false,"description":"SSH host and port for deploy target."},{"name":"JARVIS_srv_USER","required":false,"secret":false,"description":"SSH user for deploy target."},{"name":"JARVIS_SSH_KEY_PATH","required":false,"secret":false,"description":"Optional SSH private key path for deploy target authentication."},{"name":"JARVIS_srv_PSWD","required":false,"secret":true,"description":"Optional SSH password used when sshpass authentication is preferred."}],"supports_registry":true,"services":%s,"capabilities":["git-sync","npm-install","build","deploy-web","deploy-scripts","mirror","webhook","docker-restart"],"tags":["jarvis","deploy","build","mcp","automation"]}}' \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "$file_name")" \
     "$(json_escape_shell "Synchronize source, build locally, deploy web code and scripts, mirror refs, redeploy the Portainer stack or trigger a webhook, and restart MCPO.")" \
@@ -900,24 +903,61 @@ run_internal_git_mirror() {
 
 STEP_RESULTS=()
 
+init_step_sequence() {
+  STEP_SEQUENCE=("prechecks")
+  local candidate
+  for candidate in sync install build deploy-web deploy-scripts mirror webhook restart; do
+    if phase_enabled "$candidate"; then
+      STEP_SEQUENCE+=("$candidate")
+    fi
+  done
+  TOTAL_STEPS=${#STEP_SEQUENCE[@]}
+}
+
+resolve_step_index() {
+  local target="$1"
+  local idx=1
+  local item
+
+  for item in "${STEP_SEQUENCE[@]}"; do
+    if [[ "$item" == "$target" ]]; then
+      printf '%s' "$idx"
+      return 0
+    fi
+    idx=$((idx + 1))
+  done
+
+  printf '0'
+}
+
+step_label() {
+  local index="$1"
+  if [[ "$index" -gt 0 && "$TOTAL_STEPS" -gt 0 ]]; then
+    printf 'STEP %s/%s' "$index" "$TOTAL_STEPS"
+  else
+    printf 'STEP'
+  fi
+}
+
 step_start() {
   CURRENT_STEP="$1"
   CURRENT_STEP_STATUS="running"
-  log "STEP START: $CURRENT_STEP"
+  CURRENT_STEP_INDEX="$(resolve_step_index "$CURRENT_STEP")"
+  log "$(step_label "$CURRENT_STEP_INDEX") START: $CURRENT_STEP"
 }
 
 step_ok() {
   local msg="${1:-OK}"
   CURRENT_STEP_STATUS="ok"
   STEP_RESULTS+=("{\"step\":\"$CURRENT_STEP\",\"status\":\"ok\",\"message\":$(json_escape "$msg")}")
-  info "STEP OK: $CURRENT_STEP - $msg"
+  info "$(step_label "$CURRENT_STEP_INDEX") OK: $CURRENT_STEP - $msg"
 }
 
 step_fail() {
   local msg="${1:-FAILED}"
   CURRENT_STEP_STATUS="failed"
   STEP_RESULTS+=("{\"step\":\"$CURRENT_STEP\",\"status\":\"failed\",\"message\":$(json_escape "$msg")}")
-  error "STEP FAIL: $CURRENT_STEP - $msg"
+  error "$(step_label "$CURRENT_STEP_INDEX") FAIL: $CURRENT_STEP - $msg"
 }
 
 finalize_summary() {
@@ -972,6 +1012,7 @@ on_error() {
 trap 'on_error $LINENO' ERR
 
 configure_runtime_output_paths
+init_step_sequence
 
 if [[ "$LOG_TO_FILE" == "1" && -n "$LOG_FILE" ]]; then
   if [[ "$JSON_STDOUT" == "1" ]]; then
