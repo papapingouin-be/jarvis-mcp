@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     image: jarvis-mcp:latest
     environment:
-      STARTER_TRANSPORT: "http"
+      JARVIS_MCP_TRANSPORT: "http"
       PORT: "3000"
       DATABASE_URL: "postgresql://jarvis:change-me@postgres:5432/jarvis"
       MASTER_KEY_FILE: "/run/secrets/jarvis_master_key"

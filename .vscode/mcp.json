@@ -1,14 +1,14 @@
 {
   "servers": {
-    "mcp-server-starter-stdio": {
+    "jarvis-mcp-stdio": {
       "type": "stdio",
       "command": "node",
       "args": ["./build/index.js"],
       "env": {
-        "STARTER_TRANSPORT": "stdio"
+        "JARVIS_MCP_TRANSPORT": "stdio"
       }
     },
-    "mcp-server-starter-http": {
+    "jarvis-mcp-http": {
       "type": "http",
       "url": "http://localhost:3000/mcp",
       "headers": {

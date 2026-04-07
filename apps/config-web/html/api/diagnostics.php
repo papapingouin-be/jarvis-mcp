@@ -4,6 +4,10 @@ require_once __DIR__ . '/../inc/bootstrap.php';
 $d = db_try();
 $pdo = $d['ok'] ? $d['pdo'] : null;
 $scriptEnvRows = $pdo ? script_env_rows($pdo) : [];
+$transportValue = runtime_config_value($pdo, 'server.transport', 'JARVIS_MCP_TRANSPORT');
+if ($transportValue === null) {
+    $transportValue = runtime_config_value($pdo, 'server.transport', 'STARTER_TRANSPORT');
+}
 
 $checks = [
     [
@@ -20,9 +24,9 @@ $checks = [
     ],
     [
         'label' => 'Transport serveur',
-        'ok' => runtime_config_value($pdo, 'server.transport', 'STARTER_TRANSPORT') !== null,
-        'detail' => 'Valeur resolue : ' . (runtime_config_value($pdo, 'server.transport', 'STARTER_TRANSPORT') ?? 'absente'),
-        'action' => 'Definir server.transport en base ou STARTER_TRANSPORT dans l environnement',
+        'ok' => $transportValue !== null,
+        'detail' => 'Valeur resolue : ' . ($transportValue ?? 'absente'),
+        'action' => 'Definir server.transport en base ou JARVIS_MCP_TRANSPORT dans l environnement',
     ],
     [
         'label' => 'Port serveur',

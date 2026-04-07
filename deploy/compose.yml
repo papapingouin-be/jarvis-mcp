@@ -1,15 +1,15 @@
 version: "3.8"
 
 services:
-  mcp-server-starter:
+  jarvis-mcp-tools:
     build:
       context: ..
       dockerfile: Dockerfile
     image: jarvis-mcp-tools:local
-    container_name: mcp-server-starter
+    container_name: jarvis-mcp-tools
     restart: unless-stopped
     environment:
-      STARTER_TRANSPORT: "${jarvis_tools_STARTER_TRANSPORT:-http}"
+      JARVIS_MCP_TRANSPORT: "${jarvis_tools_MCP_TRANSPORT:-http}"
       PORT: "${jarvis_tools_PORT:-7010}"
       CORS_ORIGIN: "${jarvis_tools_CORS_ORIGIN:-*}"
       TZ: "${jarvis_tools_TZ:-Europe/Brussels}"

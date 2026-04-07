@@ -1,8 +1,8 @@
 {
-  "name": "mcp-typescript-starter",
-  "version": "1.0.4",
-  "description": "Outil compagnon de developpement",
-  "main": "index.js",
+  "name": "jarvis-mcp-tools",
+  "version": "1.1.0",
+  "description": "Jarvis MCP tools server and runtime admin base",
+  "main": "build/index.js",
   "type": "module",
   "scripts": {
     "test": "node --test \"tests/**/*.test.ts\"",
@@ -14,8 +14,8 @@
     "inspect": "npm run build && npx @modelcontextprotocol/inspector node build/index.js",
     "inspect:http": "npm run build && npx @modelcontextprotocol/inspector http://localhost:7010/mcp",
     "dev": "npm run build && node dev",
-    "serve:stdio": "npm run build && STARTER_TRANSPORT=stdio node build/index.js",
-    "serve:http": "npm run build && STARTER_TRANSPORT=http PORT=7010 node build/index.js",
+    "serve:stdio": "npm run build && JARVIS_MCP_TRANSPORT=stdio node build/index.js",
+    "serve:http": "npm run build && JARVIS_MCP_TRANSPORT=http PORT=7010 node build/index.js",
     "gen:tool": "hygen tool new",
     "gen:prompt": "hygen prompt new",
     "gen:resource": "hygen resource new",
@@ -25,9 +25,9 @@
   },
   "keywords": [
     "mcp",
-    "hello-world",
-    "example",
-    "tutorial"
+    "jarvis",
+    "automation",
+    "tools"
   ],
   "author": "",
   "license": "MIT",
@@ -58,7 +58,7 @@
     "typescript-eslint": "^8.46.2"
   },
   "bin": {
-    "mcp-hello-world": "./build/index.js"
+    "jarvis-mcp-server": "./build/index.js"
   },
   "files": [
     "build"

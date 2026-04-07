@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { JarvisSyncBuildRedeployService } from "../config/jarvis-sync-build-redeploy-service.js";
+import { JarvisSyncBuildRedeployService } from "../jarvis/core/deploy/jarvis-sync-build-redeploy-service.js";
 import { asScriptRunnerError } from "../modules/script_runner/services/errors.js";
 import type { RegisterableModule } from "../registry/types.js";
 

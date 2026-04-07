@@ -21,9 +21,9 @@ type InputScriptEnvDefinition = string | {
   description?: string;
 };
 
-export const SERVER_NAME = "Jarvis MCP";
-export const SERVER_VERSION = "1.0.4";
-export const SERVER_DESCRIPTION = "Outil compagnon de developpement";
+export const SERVER_NAME = "Jarvis MCP Tools";
+export const SERVER_VERSION = "1.1.0";
+export const SERVER_DESCRIPTION = "Jarvis MCP tools server and runtime admin base";
 
 const DEFAULT_APPROVED_SCRIPTS: ScriptRegistry = {
   "proxmox-diagnose.sh": {
@@ -173,6 +173,7 @@ const DEFAULT_SCRIPT_RUNNER_SENSITIVE_ENV_NAMES = [
 ];
 
 const DEFAULT_DIAGNOSE_ENV_VARS = [
+  "JARVIS_MCP_TRANSPORT",
   "STARTER_TRANSPORT",
   "PORT",
   "CORS_ORIGIN",
@@ -306,7 +307,7 @@ export function getServerEnvConfig(): {
   verboseMode: boolean;
   recentEventLimit: number;
 } {
-  const rawTransportMode = firstNonEmptyValue("STARTER_TRANSPORT");
+  const rawTransportMode = firstNonEmptyValue("JARVIS_MCP_TRANSPORT", "STARTER_TRANSPORT");
   const transportMode = rawTransportMode === "http" ? "http" : "stdio";
 
   return {

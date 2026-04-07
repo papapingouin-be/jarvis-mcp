@@ -1,13 +1,13 @@
 version: "3.9"
 
 services:
-  mcp-server-starter:
+  jarvis-mcp-tools:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mcp-server-starter
+    container_name: jarvis-mcp-tools
     environment:
-      - STARTER_TRANSPORT=http
+      - JARVIS_MCP_TRANSPORT=http
       - PORT=7010
       - CORS_ORIGIN=*
       - NODE_ENV=production
@@ -22,14 +22,14 @@ services:
       start_period: 5s
 
   # Optional: Add a development version with hot reload
-  mcp-server-starter-dev:
+  jarvis-mcp-tools-dev:
     build:
       context: .
       dockerfile: Dockerfile
       target: build
-    container_name: mcp-server-starter-dev
+    container_name: jarvis-mcp-tools-dev
     environment:
-      - STARTER_TRANSPORT=http
+      - JARVIS_MCP_TRANSPORT=http
       - PORT=7011
       - CORS_ORIGIN=*
       - NODE_ENV=development
